@@ -8,8 +8,8 @@
    do seu projeto (Project Settings > API no painel do Supabase).
    ============================================================ */
 
-const SUPABASE_URL = 'COLE_AQUI_A_URL_DO_SEU_PROJETO';
-const SUPABASE_ANON_KEY = 'COLE_AQUI_A_ANON_KEY';
+const SUPABASE_URL = 'https://uwsfpwjqkqpnauvyblov.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_cJyaa7xlXMIUR8CBim_l6w_InXds4Oc';
 const SUPABASE_CONFIGURED = !SUPABASE_URL.startsWith('COLE_AQUI');
 
 let supa = null;
