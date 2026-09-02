@@ -1,11 +1,8 @@
 /* ============================================================
    PETFLOW — Ponte com o Supabase
    Carrega os dados reais do banco para dentro do mesmo objeto
-   `DB` que o app já usa (mesmo formato do mock), então quase
-   nenhuma função de renderização precisa mudar.
-
-   Preencha SUPABASE_URL e SUPABASE_ANON_KEY abaixo com os valores
-   do seu projeto (Project Settings > API no painel do Supabase).
+   `DB` que o app já usa (mesmo formato do mock), e cuida do
+   login/cadastro de verdade (múltiplos veterinários e tutores).
    ============================================================ */
 
 const SUPABASE_URL = 'https://uwsfpwjqkqpnauvyblov.supabase.co';
@@ -24,17 +21,60 @@ async function supaSignInEmail(email, password){
   if(error) throw error;
   return data;
 }
-async function supaSignUpTutor(email, password){
-  // O trigger link_tutor_on_signup (ver schema.sql) vincula automaticamente
-  // este novo usuário à linha em `tutors` que tiver o mesmo e-mail.
-  const { data, error } = await supa.auth.signUp({ email, password });
-  if(error) throw error;
-  return data;
+
+/* Cadastro de tutor: cria a conta e, em seguida, ou "reivindica" um
+   cadastro que o(a) veterinário(a) já tenha feito com o mesmo e-mail,
+   ou cria um cadastro de tutor novo vinculado a essa conta. */
+async function supaSignUpTutor(email, password, name, phone){
+  const { data: signUpData, error: signUpError } = await supa.auth.signUp({ email, password });
+  if(signUpError) throw signUpError;
+  const user = signUpData.user;
+  if(!user) throw new Error('Não foi possível criar a conta agora. Tente novamente em instantes.');
+
+  const { data: claimed, error: claimErr } = await supa.from('tutors')
+    .update({ user_id: user.id })
+    .eq('email', email)
+    .is('user_id', null)
+    .select();
+  if(claimErr) console.warn('[PetFlow] Não foi possível checar cadastro existente:', claimErr);
+
+  if(!claimed || claimed.length === 0){
+    const { error: insertErr } = await supa.from('tutors').insert({
+      user_id: user.id, name: name || email.split('@')[0], phone: phone || '', email,
+    });
+    if(insertErr) throw insertErr;
+  }
+  return user;
 }
-async function supaSignOut(){ await supa.auth.signOut(); }
-async function supaCurrentSession(){
-  const { data } = await supa.auth.getSession();
-  return data.session;
+
+async function supaSignOut(){ if(supa) await supa.auth.signOut(); }
+
+/* Cadastro de veterinário(a): cria a conta e a linha em `vets`.
+   Ativado só se o Bloco 4 do auth-setup.sql foi rodado — sem aquela
+   política, o insert abaixo falha com erro de permissão. */
+async function supaSignUpVet(email, password, name, crmv, clinic, phone){
+  const { data: signUpData, error: signUpError } = await supa.auth.signUp({ email, password });
+  if(signUpError) throw signUpError;
+  const user = signUpData.user;
+  if(!user) throw new Error('Não foi possível criar a conta agora. Tente novamente em instantes.');
+
+  const { error: insertErr } = await supa.from('vets').insert({
+    id: user.id, name: name || email.split('@')[0], crmv: crmv||'', clinic: clinic||'',
+    specialty: '', email, phone: phone||'',
+  });
+  if(insertErr) throw insertErr;
+  return user;
+}
+
+/* Descobre se a conta logada é de um(a) veterinário(a) ou de um(a) tutor(a). */
+async function getMyProfile(){
+  const { data: { user } } = await supa.auth.getUser();
+  if(!user) return null;
+  const { data: vetRow } = await supa.from('vets').select('*').eq('id', user.id).maybeSingle();
+  if(vetRow) return { role:'vet', user, vetRow };
+  const { data: tutorRow } = await supa.from('tutors').select('*').eq('user_id', user.id).maybeSingle();
+  if(tutorRow) return { role:'tutor', user, tutorRow };
+  return { role:null, user };
 }
 
 /* ---------- Carrega tudo do Supabase para dentro de DB (mesmo formato do mock) ---------- */
@@ -55,14 +95,7 @@ async function loadAllFromSupabase(){
     ]);
 
   [vets, tutors, pets, appointments, consultations, prescriptions, exams, vaccines, payments, closedDates, blockedSlots]
-    .forEach(r=>{ if(r.error) console.error('Erro ao carregar do Supabase:', r.error); });
-
-  // Reaproveita o objeto DB já existente no app.js, só troca o conteúdo.
-  DB.vet = vets.data && vets.data[0] ? {
-    name: vets.data[0].name, firstName: vets.data[0].name.split(' ')[1]||vets.data[0].name,
-    crmv: vets.data[0].crmv, clinic: vets.data[0].clinic, specialty: vets.data[0].specialty,
-    email: vets.data[0].email, phone: vets.data[0].phone,
-  } : DB.vet;
+    .forEach(r=>{ if(r.error) console.error('[PetFlow] Erro ao carregar do Supabase:', r.error); });
 
   DB.tutors = (tutors.data||[]).map(t=>({ id:t.id, name:t.name, phone:t.phone, email:t.email, pets: (pets.data||[]).filter(p=>p.tutor_id===t.id).map(p=>p.id) }));
   DB.pets = (pets.data||[]).map(p=>({ id:p.id, name:p.name, species:p.species, breed:p.breed, sex:p.sex, birth:p.birth, weight:Number(p.weight), microchip:p.microchip, notes:p.notes||'', tutorId:p.tutor_id }));
@@ -74,40 +107,127 @@ async function loadAllFromSupabase(){
   DB.payments = (payments.data||[]).map(p=>({ id:p.id, petId:p.pet_id, date:p.date, service:p.service, refType:p.ref_type, refId:p.ref_id, valor:Number(p.valor), status:p.status, formaPagamento:p.forma_pagamento, parcelamentoTutor:p.parcelamento_tutor, paidDate:p.paid_date }));
   DB.closedDates = (closedDates.data||[]).map(c=>({ id:c.id, date:c.date, reason:c.reason||'' }));
   DB.blockedSlots = (blockedSlots.data||[]).map(b=>({ id:b.id, date:b.date, time:b.time.slice(0,5) }));
+
+  // vets: usa o total só como referência; quem realmente "vira" o DB.vet
+  // exibido na tela é a linha do usuário logado (ver enterAppWithProfile).
+  if(vets.data && vets.data.length && !DB.__vetLocked){
+    const v = vets.data[0];
+    DB.vet = { name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
+  }
 }
 
-/* ============================================================
-   PRÓXIMO PASSO (fase 2 da migração):
-   As funções abaixo são o padrão a seguir para religar cada ação
-   de salvar em app_part11.js à tabela real, além de atualizar o
-   objeto DB local (que é o que a tela lê). Comece por estas —
-   são as mais usadas:
-
-   - save-atendimento   -> INSERT em consultations (+ exams/vaccines/payments)
-   - save-receita        -> INSERT em prescriptions
-   - save-exame           -> INSERT em exams (+ payments se valor>0)
-   - save-vacina           -> INSERT em vaccines (+ payments se valor>0)
-   - save-registrar-pagamento -> UPDATE em payments (status, forma_pagamento...)
-   - confirm-appt / complete-appt / cancel-appt -> UPDATE em appointments
-
-   Exemplo de como fica o INSERT de um exame:
-   ============================================================ */
-async function supaInsertExam(exam){
-  const { data, error } = await supa.from('exams').insert({
-    pet_id: exam.petId, date: exam.date, type: exam.type, valor: exam.valor,
-    description: exam.description, status: exam.status,
-  }).select().single();
-  if(error) throw error;
-  return data;
+/* ---------- Entra no app já autenticado, com o perfil certo ---------- */
+async function enterAppWithProfile(profile){
+  await loadAllFromSupabase();
+  if(profile.role === 'vet'){
+    const v = profile.vetRow;
+    DB.vet = { name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
+    DB.__vetLocked = true; // impede loadAllFromSupabase de sobrescrever com outro(a) vet
+    STATE.role = 'vet';
+    STATE.view = 'vet-dashboard';
+  } else if(profile.role === 'tutor'){
+    STATE.role = 'tutor';
+    STATE.view = 'tutor-dashboard';
+    STATE.currentTutorId = profile.tutorRow.id;
+  }
+  STATE.authError = null; STATE.authBusy = false;
+  render();
 }
 
-/* ---------- Liga tudo, com fallback seguro para os dados de demonstração ---------- */
+async function handleRealLogin(role, email, password){
+  STATE.authBusy = true; render();
+  try{
+    STATE.authError = null;
+    await supaSignInEmail(email, password);
+    const profile = await getMyProfile();
+    if(!profile || !profile.role){
+      STATE.authError = 'Login feito, mas não encontramos um cadastro de ' + (role==='vet'?'veterinário(a)':'tutor(a)') + ' vinculado a esta conta.';
+      STATE.authBusy = false; render(); return;
+    }
+    if(profile.role !== role){
+      STATE.authError = `Essa conta está cadastrada como ${profile.role==='vet'?'veterinário(a)':'tutor(a)'}. Clique na aba certa acima.`;
+      STATE.authBusy = false; render(); return;
+    }
+    await enterAppWithProfile(profile);
+  } catch(err){
+    STATE.authError = traduzErroAuth(err);
+    STATE.authBusy = false; render();
+  }
+}
+
+async function handleTutorSignup(email, password, name, phone){
+  STATE.authBusy = true; render();
+  try{
+    STATE.authError = null;
+    await supaSignUpTutor(email, password, name, phone);
+    const profile = await getMyProfile();
+    if(profile && profile.role){
+      await enterAppWithProfile(profile);
+    } else {
+      STATE.authError = 'Conta criada! Se pedirmos confirmação por e-mail, confira sua caixa de entrada e depois volte para entrar.';
+      STATE.signupMode = false; STATE.authBusy = false; render();
+    }
+  } catch(err){
+    STATE.authError = traduzErroAuth(err);
+    STATE.authBusy = false; render();
+  }
+}
+
+async function handleVetSignup(email, password, name, crmv, clinic, phone){
+  STATE.authBusy = true; render();
+  try{
+    STATE.authError = null;
+    await supaSignUpVet(email, password, name, crmv, clinic, phone);
+    const profile = await getMyProfile();
+    if(profile && profile.role){
+      await enterAppWithProfile(profile);
+    } else {
+      STATE.authError = 'Conta criada! Se pedirmos confirmação por e-mail, confira sua caixa de entrada e depois volte para entrar.';
+      STATE.signupMode = false; STATE.authBusy = false; render();
+    }
+  } catch(err){
+    STATE.authError = traduzErroAuth(err);
+    STATE.authBusy = false; render();
+  }
+}
+
+async function handleRealLogout(){
+  await supaSignOut();
+  DB.__vetLocked = false;
+  STATE.role = null; STATE.view = null; STATE.modal = null;
+  STATE.authError = null; STATE.signupMode = false; STATE.authBusy = false;
+  render();
+}
+
+function traduzErroAuth(err){
+  const msg = (err && err.message) || '';
+  if(/invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos.';
+  if(/user already registered/i.test(msg)) return 'Já existe uma conta com esse e-mail. Tente entrar em vez de criar uma nova.';
+  if(/duplicate key/i.test(msg)) return 'Este e-mail já está cadastrado.';
+  if(/password should be at least/i.test(msg)) return 'A senha precisa ter pelo menos 6 caracteres.';
+  if(/rate limit/i.test(msg)) return 'Muitas tentativas seguidas. Aguarde um instante e tente de novo.';
+  if(/row-level security|permission denied/i.test(msg)) return 'Cadastro de veterinário(a) ainda não está liberado neste banco (falta rodar o Bloco 4 do auth-setup.sql).';
+  return msg || 'Algo deu errado. Tente novamente.';
+}
+
+/* ---------- Liga tudo: restaura sessão existente ou mostra o login ---------- */
 (function bootstrapSupabase(){
+  window.__petflowBooted = true;
   if(!SUPABASE_CONFIGURED || !supa){
-    console.info('[PetFlow] Supabase ainda não configurado — usando dados de demonstração locais.');
+    console.info('[PetFlow] Supabase não configurado — usando dados de demonstração locais.');
+    render();
     return;
   }
-  loadAllFromSupabase()
-    .then(()=>{ if(typeof render==='function') render(); console.info('[PetFlow] Dados carregados do Supabase.'); })
-    .catch(err=>{ console.error('[PetFlow] Falha ao carregar do Supabase, mantendo dados de demonstração:', err); });
+  supa.auth.getSession().then(async ({data})=>{
+    if(data.session){
+      try{
+        const profile = await getMyProfile();
+        if(profile && profile.role){ await enterAppWithProfile(profile); return; }
+      } catch(err){ console.error('[PetFlow] Erro ao restaurar sessão:', err); }
+    }
+    render();
+  }).catch(err=>{
+    console.error('[PetFlow] Erro ao verificar sessão:', err);
+    render();
+  });
 })();
