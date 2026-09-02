@@ -1026,7 +1026,11 @@ const STATE = {
   agenda: { view: 'semana', anchorDate: '2026-09-01' },
   confirmDiscard: false,
   booking: { step:1, petId:null, service:null, modality:null, date:null, time:null }, // wizard tutor
-  currentTutorId: 't1', // tutor "logado" na demo
+  currentTutorId: 't1', // usado no modo demonstração; login real sobrescreve isso
+  loginTab: 'vet',       // aba ativa na tela de login real: 'vet' | 'tutor'
+  signupMode: false,     // mostra o formulário de criar conta (tutor)
+  authError: null,       // mensagem de erro/aviso do login real
+  authBusy: false,       // trava os botões de login enquanto processa
 };
 
 function navigate(view, params){
@@ -1045,6 +1049,7 @@ const app = document.getElementById('app');
 function render(){
   if(!STATE.role){
     app.innerHTML = renderLogin();
+    bindGlobalEvents();
     return;
   }
   if(STATE.role === 'vet'){
@@ -1082,6 +1087,10 @@ function renderConfirmDiscard(){
 }
 
 /* ===================== LOGIN ===================== */
+function isSupabaseConfigured(){
+  return (typeof SUPABASE_CONFIGURED !== 'undefined') && SUPABASE_CONFIGURED;
+}
+
 function renderLogin(){
   return `
   <div class="login-wrap">
@@ -1101,25 +1110,70 @@ function renderLogin(){
     </div>
     <div class="login-panel">
       <div class="login-card">
-        <h2>Bem-vindo de volta</h2>
-        <p class="sub">Escolha como você quer entrar na demonstração.</p>
-
-        <button class="role-option vet-opt" data-action="login" data-role="vet">
-          <span class="ric">${ic('stethoscope')}</span>
-          <span class="rtext"><b>Sou veterinário(a)</b><span>Entrar como Dra. Ana Martins</span></span>
-          <span class="chev">${ic('chevronRight')}</span>
-        </button>
-
-        <button class="role-option tutor-opt" data-action="login" data-role="tutor">
-          <span class="ric">${ic('paw')}</span>
-          <span class="rtext"><b>Sou tutor(a)</b><span>Entrar como Paola Fontoura</span></span>
-          <span class="chev">${ic('chevronRight')}</span>
-        </button>
-
-        <p class="login-foot">Ambiente de demonstração com dados fictícios. Nenhum dado real de clínicas, tutores ou animais é utilizado.</p>
+        ${isSupabaseConfigured() ? renderRealLoginForm() : renderDemoLoginButtons()}
       </div>
     </div>
   </div>`;
+}
+
+function renderDemoLoginButtons(){
+  return `
+    <h2>Bem-vindo de volta</h2>
+    <p class="sub">Escolha como você quer entrar na demonstração.</p>
+
+    <button class="role-option vet-opt" data-action="login" data-role="vet">
+      <span class="ric">${ic('stethoscope')}</span>
+      <span class="rtext"><b>Sou veterinário(a)</b><span>Entrar como Dra. Ana Martins</span></span>
+      <span class="chev">${ic('chevronRight')}</span>
+    </button>
+
+    <button class="role-option tutor-opt" data-action="login" data-role="tutor">
+      <span class="ric">${ic('paw')}</span>
+      <span class="rtext"><b>Sou tutor(a)</b><span>Entrar como Paola Fontoura</span></span>
+      <span class="chev">${ic('chevronRight')}</span>
+    </button>
+
+    <p class="login-foot">Ambiente de demonstração com dados fictícios. Nenhum dado real de clínicas, tutores ou animais é utilizado.</p>
+  `;
+}
+
+function renderRealLoginForm(){
+  const tab = STATE.loginTab || 'vet';
+  const signup = STATE.signupMode;
+  return `
+    <h2>${signup ? (tab==='vet' ? 'Criar conta de veterinário(a)' : 'Criar conta de tutor(a)') : 'Bem-vindo(a) de volta'}</h2>
+    <p class="sub">${signup ? 'Preencha seus dados para começar.' : 'Entre com sua conta para continuar.'}</p>
+
+    <div class="mini-toggle" style="margin-bottom:22px;width:100%;">
+      <button style="flex:1;" class="${tab==='vet'?'active':''}" data-action="login-tab" data-tab="vet">Veterinário(a)</button>
+      <button style="flex:1;" class="${tab==='tutor'?'active':''}" data-action="login-tab" data-tab="tutor">Tutor(a)</button>
+    </div>
+
+    ${STATE.authError ? `<div class="badge badge-danger" style="display:block;white-space:normal;text-align:left;margin-bottom:16px;padding:10px 14px;line-height:1.5;">${STATE.authError}</div>` : ''}
+
+    <div class="form-row single"><div class="field"><label>E-mail</label><input type="email" id="auth_email" placeholder="seu@email.com" autocomplete="email"></div></div>
+    <div class="form-row single"><div class="field"><label>Senha</label><input type="password" id="auth_password" placeholder="••••••••" autocomplete="${signup?'new-password':'current-password'}"></div></div>
+
+    ${signup ? `
+      <div class="form-row single"><div class="field"><label>Nome completo</label><input id="auth_name" placeholder="Seu nome"></div></div>
+      ${tab==='vet' ? `
+        <div class="form-row">
+          <div class="field"><label>CRMV</label><input id="auth_crmv" placeholder="Ex: CRMV-SP 12.345"></div>
+          <div class="field"><label>Telefone</label><input id="auth_phone" placeholder="(11) 90000-0000"></div>
+        </div>
+        <div class="form-row single"><div class="field"><label>Clínica</label><input id="auth_clinic" placeholder="Nome da sua clínica"></div></div>
+      ` : `
+        <div class="form-row single"><div class="field"><label>Telefone</label><input id="auth_phone" placeholder="(11) 90000-0000"></div></div>
+      `}
+      <button class="btn btn-primary btn-block" data-action="do-signup" data-role="${tab}" ${STATE.authBusy?'disabled':''}>${STATE.authBusy?'Criando conta...':'Criar conta'}</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:8px;" data-action="toggle-signup">Já tenho conta — entrar</button>
+    ` : `
+      <button class="btn btn-primary btn-block" data-action="do-real-login" data-role="${tab}" ${STATE.authBusy?'disabled':''}>${STATE.authBusy?'Entrando...':'Entrar'}</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:8px;" data-action="toggle-signup">Ainda não tenho conta — criar</button>
+    `}
+
+    <p class="login-foot">Seus dados ficam salvos com segurança no Supabase.</p>
+  `;
 }
 
 function doLogin(role){
@@ -1129,6 +1183,7 @@ function doLogin(role){
 }
 function doLogout(){
   STATE.role = null; STATE.view = null; STATE.modal = null;
+  STATE.authError = null; STATE.signupMode = false;
   render();
 }
 /* ===================== VET SHELL ===================== */
@@ -3143,7 +3198,28 @@ document.addEventListener('click', function(e){
     case 'confirm-discard-close': doCloseModal(); break;
 
     case 'login': doLogin(d.role); break;
-    case 'logout': doLogout(); break;
+    case 'logout': isSupabaseConfigured() && typeof handleRealLogout==='function' ? handleRealLogout() : doLogout(); break;
+
+    case 'login-tab': STATE.loginTab = d.tab; STATE.authError = null; render(); break;
+    case 'toggle-signup': STATE.signupMode = !STATE.signupMode; STATE.authError = null; render(); break;
+    case 'do-real-login': {
+      const email = val('auth_email'), password = val('auth_password');
+      if(!email || !password){ STATE.authError = 'Preencha e-mail e senha.'; render(); break; }
+      if(typeof handleRealLogin === 'function') handleRealLogin(d.role, email, password);
+      break;
+    }
+    case 'do-signup': {
+      const email = val('auth_email'), password = val('auth_password'), name = val('auth_name'), phone = val('auth_phone');
+      if(d.role === 'vet'){
+        const crmv = val('auth_crmv'), clinic = val('auth_clinic');
+        if(!email || !password || !name){ STATE.authError = 'Preencha nome, e-mail e senha.'; render(); break; }
+        if(typeof handleVetSignup === 'function') handleVetSignup(email, password, name, crmv, clinic, phone);
+      } else {
+        if(!email || !password || !name){ STATE.authError = 'Preencha nome, e-mail e senha.'; render(); break; }
+        if(typeof handleTutorSignup === 'function') handleTutorSignup(email, password, name, phone);
+      }
+      break;
+    }
 
     case 'nav': navigate(d.view, { petId: d.petId, tutorId: d.tutorId }); break;
 
@@ -3468,8 +3544,14 @@ document.addEventListener('click', function(e){
   }
 });
 
-/* ---------- Bootstrap ---------- */
-render();
+/* ---------- Bootstrap ----------
+   Se supabase-client.js carregar normalmente, ele mesmo chama render()
+   depois de checar login/dados. Este é só um seguro: se por algum motivo
+   aquele arquivo não carregar (bloqueio de rede, CDN fora do ar...), a
+   página não fica em branco — ainda assim mostra o app em modo demonstração. */
+window.addEventListener('load', function(){
+  if(!window.__petflowBooted){ window.__petflowBooted = true; render(); }
+});
 
 </script>
 <!-- Ponte com o Supabase (opcional): enquanto SUPABASE_URL não for
