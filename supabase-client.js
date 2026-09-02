@@ -73,8 +73,14 @@ async function dbUpdatePet(petId, fields){
   if('weight' in fields) payload.weight = fields.weight;
   if('sex' in fields) payload.sex = fields.sex;
   if('notes' in fields) payload.notes = fields.notes;
+  if('birth' in fields) payload.birth = fields.birth;
   if('photo' in fields) payload.photo_url = fields.photo;
   const { error } = await supa.from('pets').update(payload).eq('id', petId);
+  if(error) throw error;
+}
+async function dbDeletePet(petId){
+  requireSupa();
+  const { error } = await supa.from('pets').delete().eq('id', petId);
   if(error) throw error;
 }
 async function dbInsertTutor(tutor){
