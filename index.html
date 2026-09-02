@@ -1097,11 +1097,6 @@ function renderLogin(){
         <h1>A vida do pet, organizada em um só lugar.</h1>
         <p>Prontuário, agenda, receitas, exames e vacinas — tudo conectado entre veterinário e tutor, sem planilhas e sem papel.</p>
       </div>
-      <div class="hero-stats">
-        <div><b>${DB.pets.length}</b><span>pets ativos</span></div>
-        <div><b>${DB.tutors.length}</b><span>tutores</span></div>
-        <div><b>${DB.appointments.filter(a=>a.status!=='Realizado').length}</b><span>atendimentos agendados</span></div>
-      </div>
     </div>
     <div class="login-panel">
       <div class="login-card">
