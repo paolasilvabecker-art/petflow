@@ -49,6 +49,155 @@ async function supaSignUpTutor(email, password, name, phone){
 
 async function supaSignOut(){ if(supa) await supa.auth.signOut(); }
 
+/* ============================================================
+   Gravação real no Supabase — cada função espelha uma mutação
+   que antes só existia na memória local. Todas assumem que o
+   objeto local já usa os mesmos nomes/ids que a tabela remota
+   (os ids agora são UUIDs de verdade, ver uid() em app.js).
+   ============================================================ */
+function requireSupa(){ if(!SUPABASE_CONFIGURED || !supa) throw new Error('Supabase não está configurado neste ambiente.'); }
+
+async function dbInsertPet(pet){
+  requireSupa();
+  const { error } = await supa.from('pets').insert({
+    id: pet.id, tutor_id: pet.tutorId, name: pet.name, species: pet.species, breed: pet.breed,
+    sex: pet.sex, birth: pet.birth, weight: pet.weight, microchip: pet.microchip||'', notes: pet.notes||'', photo_url: pet.photo||null,
+  });
+  if(error) throw error;
+}
+async function dbUpdatePet(petId, fields){
+  requireSupa();
+  const payload = {};
+  if('name' in fields) payload.name = fields.name;
+  if('breed' in fields) payload.breed = fields.breed;
+  if('weight' in fields) payload.weight = fields.weight;
+  if('sex' in fields) payload.sex = fields.sex;
+  if('notes' in fields) payload.notes = fields.notes;
+  if('photo' in fields) payload.photo_url = fields.photo;
+  const { error } = await supa.from('pets').update(payload).eq('id', petId);
+  if(error) throw error;
+}
+async function dbInsertTutor(tutor){
+  requireSupa();
+  const { error } = await supa.from('tutors').insert({ id: tutor.id, name: tutor.name, phone: tutor.phone||'', email: tutor.email, photo_url: tutor.photo||null });
+  if(error) throw error;
+}
+async function dbUpdateTutor(tutorId, fields){
+  requireSupa();
+  const payload = {};
+  if('photo' in fields) payload.photo_url = fields.photo;
+  if('name' in fields) payload.name = fields.name;
+  if('phone' in fields) payload.phone = fields.phone;
+  const { error } = await supa.from('tutors').update(payload).eq('id', tutorId);
+  if(error) throw error;
+}
+async function dbInsertConsultation(c){
+  requireSupa();
+  const { error } = await supa.from('consultations').insert({
+    id:c.id, pet_id:c.petId, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:c.weight,
+    temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos,
+    diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:c.valor||0,
+  });
+  if(error) throw error;
+}
+async function dbInsertExam(e){
+  requireSupa();
+  const { error } = await supa.from('exams').insert({ id:e.id, pet_id:e.petId, date:e.date, type:e.type, valor:e.valor||0, description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status });
+  if(error) throw error;
+}
+async function dbUpdateExam(examId, fields){
+  requireSupa();
+  const { error } = await supa.from('exams').update(fields).eq('id', examId);
+  if(error) throw error;
+}
+async function dbInsertVaccine(v){
+  requireSupa();
+  const { error } = await supa.from('vaccines').insert({ id:v.id, pet_id:v.petId, vaccine:v.vaccine, date:v.date, batch:v.batch||'', next_date:v.nextDate, valor:v.valor||0, notes:v.notes||'' });
+  if(error) throw error;
+}
+async function dbInsertPrescription(r){
+  requireSupa();
+  const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, date:r.date, meds:r.meds, orientations:r.orientations||'' });
+  if(error) throw error;
+}
+async function dbInsertPayment(p){
+  requireSupa();
+  const { error } = await supa.from('payments').insert({ id:p.id, pet_id:p.petId, date:p.date, service:p.service, ref_type:p.refType, ref_id:p.refId, valor:p.valor, status:p.status });
+  if(error) throw error;
+}
+async function dbUpdatePaymentsStatus(payIds, forma, parcelas, paidDate){
+  requireSupa();
+  const { error } = await supa.from('payments').update({ status:'Pago', forma_pagamento: forma, parcelamento_tutor: forma==='Cartão de crédito' ? (parcelas||1) : null, paid_date: paidDate }).in('id', payIds);
+  if(error) throw error;
+}
+async function dbInsertAppointment(a){
+  requireSupa();
+  const { error } = await supa.from('appointments').insert({ id:a.id, pet_id:a.petId, date:a.date, time:a.time, type:a.type, modality:a.modality, status:a.status });
+  if(error) throw error;
+}
+async function dbUpdateAppointment(apptId, fields){
+  requireSupa();
+  const payload = {};
+  if('date' in fields) payload.date = fields.date;
+  if('time' in fields) payload.time = fields.time;
+  if('status' in fields) payload.status = fields.status;
+  if('proposedSlots' in fields) payload.proposed_slots = fields.proposedSlots;
+  const { error } = await supa.from('appointments').update(payload).eq('id', apptId);
+  if(error) throw error;
+}
+async function dbToggleClosedDate(date, reason, isClosingNow){
+  requireSupa();
+  if(isClosingNow){
+    const { error } = await supa.from('closed_dates').insert({ date, reason: reason||'' });
+    if(error) throw error;
+  } else {
+    const { error } = await supa.from('closed_dates').delete().eq('date', date);
+    if(error) throw error;
+  }
+}
+async function dbToggleBlockedSlot(date, time, isBlockingNow){
+  requireSupa();
+  if(isBlockingNow){
+    const { error } = await supa.from('blocked_slots').insert({ date, time });
+    if(error) throw error;
+  } else {
+    const { error } = await supa.from('blocked_slots').delete().eq('date', date).eq('time', time);
+    if(error) throw error;
+  }
+}
+async function dbBlockSlotRange(date, slots){
+  requireSupa();
+  const rows = slots.map(time=>({ date, time }));
+  const { error } = await supa.from('blocked_slots').upsert(rows, { onConflict: 'date,time', ignoreDuplicates: true });
+  if(error) throw error;
+}
+
+/* ---------- Fotos: upload real no Supabase Storage ---------- */
+async function handlePhotoUpload(kind, id, file){
+  if(!SUPABASE_CONFIGURED || !supa){ showToast('Conecte o Supabase para enviar fotos.', 'warn'); return; }
+  try{
+    showToast('Enviando foto...');
+    const ext = (file.name.split('.').pop()||'jpg').toLowerCase();
+    const path = `${kind}s/${id}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supa.storage.from('photos').upload(path, file, { upsert:true, contentType: file.type||'image/jpeg' });
+    if(upErr) throw upErr;
+    const { data: pub } = supa.storage.from('photos').getPublicUrl(path);
+    const url = pub.publicUrl;
+    if(kind==='pet'){
+      await dbUpdatePet(id, { photo: url });
+      const pet = getPet(id); if(pet) pet.photo = url;
+    } else {
+      await dbUpdateTutor(id, { photo: url });
+      const t = getTutor(id); if(t) t.photo = url;
+    }
+    showToast('Foto atualizada!');
+    render();
+  } catch(err){
+    showToast('Não foi possível enviar a foto: ' + (err.message||''), 'warn');
+    render();
+  }
+}
+
 /* Cadastro de veterinário(a): cria a conta e a linha em `vets`.
    Ativado só se o Bloco 4 do auth-setup.sql foi rodado — sem aquela
    política, o insert abaixo falha com erro de permissão. */
@@ -97,8 +246,8 @@ async function loadAllFromSupabase(){
   [vets, tutors, pets, appointments, consultations, prescriptions, exams, vaccines, payments, closedDates, blockedSlots]
     .forEach(r=>{ if(r.error) console.error('[PetFlow] Erro ao carregar do Supabase:', r.error); });
 
-  DB.tutors = (tutors.data||[]).map(t=>({ id:t.id, name:t.name, phone:t.phone, email:t.email, pets: (pets.data||[]).filter(p=>p.tutor_id===t.id).map(p=>p.id) }));
-  DB.pets = (pets.data||[]).map(p=>({ id:p.id, name:p.name, species:p.species, breed:p.breed, sex:p.sex, birth:p.birth, weight:Number(p.weight), microchip:p.microchip, notes:p.notes||'', tutorId:p.tutor_id }));
+  DB.tutors = (tutors.data||[]).map(t=>({ id:t.id, name:t.name, phone:t.phone, email:t.email, photo:t.photo_url||null, pets: (pets.data||[]).filter(p=>p.tutor_id===t.id).map(p=>p.id) }));
+  DB.pets = (pets.data||[]).map(p=>({ id:p.id, name:p.name, species:p.species, breed:p.breed, sex:p.sex, birth:p.birth, weight:Number(p.weight), microchip:p.microchip, notes:p.notes||'', tutorId:p.tutor_id, photo:p.photo_url||null }));
   DB.appointments = (appointments.data||[]).map(a=>({ id:a.id, petId:a.pet_id, date:a.date, time:a.time.slice(0,5), type:a.type, modality:a.modality, status:a.status, proposedSlots:a.proposed_slots }));
   DB.consultations = (consultations.data||[]).map(c=>({ id:c.id, petId:c.pet_id, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:Number(c.weight), temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos, diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:Number(c.valor||0) }));
   DB.prescriptions = (prescriptions.data||[]).map(r=>({ id:r.id, petId:r.pet_id, date:r.date, meds:r.meds||[], orientations:r.orientations||'' }));
