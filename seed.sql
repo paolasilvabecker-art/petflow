@@ -11,7 +11,7 @@
 -- ============================================================
 
 insert into vets (id, name, crmv, clinic, specialty, email, phone) values
-  ('COLE_AQUI_O_UUID_DO_AUTH_USER', 'Dra. Ana Martins', 'CRMV-SP 34.812', 'Clínica Vida Animal', 'Clínica geral e domiciliar', 'ana.martins@petflow.app', '(11) 98221-4477');
+  ('b52b8311-f96d-4624-80aa-105f007545c5', 'Dra. Ana Martins', 'CRMV-SP 34.812', 'Clínica Vida Animal', 'Clínica geral e domiciliar', 'ana.martins@petflow.app', '(11) 98221-4477');
 
 insert into tutors (id, name, phone, email) values
   ('11111111-1111-1111-1111-111111111111', 'Paola Fontoura', '(11) 99887-1122', 'paola@email.com'),
