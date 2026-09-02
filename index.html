@@ -677,7 +677,15 @@ const ICONS = {
 function ic(name, cls){ return `<svg class="icon ${cls||''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
 
 /* ---------- Utilidades ---------- */
-function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+function uid(prefix){
+  // Gera um UUID de verdade (compatível com as colunas `uuid` do Supabase).
+  // O parâmetro `prefix` é ignorado — mantido só por compatibilidade com chamadas existentes.
+  if(typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+    const r = Math.random()*16|0, v = c==='x' ? r : (r&0x3|0x8);
+    return v.toString(16);
+  });
+}
 function fmtDate(iso){
   const d = new Date(iso+'T00:00:00');
   const meses = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
@@ -715,6 +723,44 @@ function initials(name){
 
 const SPECIES_EMOJI = { 'Cachorro':'🐶', 'Gato':'🐱' };
 const SPECIES_COLOR = { 'Cachorro':'#E2EFE9', 'Gato':'#FFE6D9' };
+
+/* ---------- Fotos de pet/tutor (com fallback pra emoji/iniciais) ---------- */
+function petAvatarHtml(pet, sizePx, fontPx){
+  sizePx = sizePx || 56; fontPx = fontPx || 26;
+  if(pet.photo){
+    return `<img src="${pet.photo}" style="width:${sizePx}px;height:${sizePx}px;border-radius:16px;object-fit:cover;flex-shrink:0;" alt="${pet.name}">`;
+  }
+  return `<span class="pet-photo" style="width:${sizePx}px;height:${sizePx}px;font-size:${fontPx}px;background:${SPECIES_COLOR[pet.species]};">${SPECIES_EMOJI[pet.species]}</span>`;
+}
+function tutorAvatarHtml(tutor, sizePx, fontPx){
+  sizePx = sizePx || 40; fontPx = fontPx || 14;
+  if(tutor.photo){
+    return `<img src="${tutor.photo}" style="width:${sizePx}px;height:${sizePx}px;border-radius:50%;object-fit:cover;flex-shrink:0;" alt="${tutor.name}">`;
+  }
+  return `<span class="avatar" style="width:${sizePx}px;height:${sizePx}px;font-size:${fontPx}px;background:var(--primary-soft);color:var(--primary-dark);">${initials(tutor.name)}</span>`;
+}
+/* Mesmos avatares acima, mas com um botãozinho de câmera sobreposto que
+   abre o seletor de arquivo e dispara o upload (ver 'change' listener). */
+function petPhotoUploadWrap(pet, sizePx, fontPx){
+  return `
+  <div style="position:relative;flex-shrink:0;">
+    ${petAvatarHtml(pet, sizePx, fontPx)}
+    <label style="position:absolute;bottom:-4px;right:-4px;width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--shadow-sm);border:2px solid var(--surface);">
+      ${ic('camera','icon-sm')}
+      <input type="file" accept="image/*" style="display:none;" data-photo-upload="pet" data-pet-id="${pet.id}">
+    </label>
+  </div>`;
+}
+function tutorPhotoUploadWrap(tutor, sizePx, fontPx){
+  return `
+  <div style="position:relative;flex-shrink:0;display:inline-block;">
+    ${tutorAvatarHtml(tutor, sizePx, fontPx)}
+    <label style="position:absolute;bottom:-4px;right:-4px;width:24px;height:24px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--shadow-sm);border:2px solid var(--surface);">
+      ${ic('camera','icon-sm')}
+      <input type="file" accept="image/*" style="display:none;" data-photo-upload="tutor" data-tutor-id="${tutor.id}">
+    </label>
+  </div>`;
+}
 
 const APPT_STATUS_META = {
   'Aguardando confirmação': {badge:'badge-warn', icon:'clock'},
@@ -1557,7 +1603,7 @@ function renderPetCard(p){
   return `
   <div class="card pet-card" data-action="nav" data-view="vet-pet-detail" data-pet-id="${p.id}">
     <div class="head">
-      <span class="pet-photo" style="background:${SPECIES_COLOR[p.species]};">${SPECIES_EMOJI[p.species]}</span>
+      ${petAvatarHtml(p, 56, 26)}
       <div><h3>${p.name}</h3><div class="breed">${p.breed} · ${ageFromBirth(p.birth)}</div></div>
     </div>
     <div class="pet-meta">
@@ -1582,7 +1628,7 @@ function renderVetTutores(){
         const pendente = tutorPendingTotal(t.id);
         return `
         <div class="reg-row" style="padding:16px 4px;">
-          <span class="avatar" style="width:40px;height:40px;font-size:14px;background:var(--primary-soft);color:var(--primary-dark);cursor:pointer;" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">${initials(t.name)}</span>
+          <span style="cursor:pointer;" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">${tutorAvatarHtml(t, 40, 14)}</span>
           <div style="flex:1;cursor:pointer;" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">
             <b style="font-size:14.5px;">${t.name}</b>
             <div style="font-size:12.5px;color:var(--ink-muted);margin-top:2px;">${pets.map(p=>SPECIES_EMOJI[p.species]).join(' ')} ${pets.length} pet(s) · último atendimento ${lastAppts[0]?fmtDateShort(lastAppts[0].date):'—'}</div>
@@ -1606,7 +1652,7 @@ function renderVetTutorDetail(tutorId){
   return `
     <div class="breadcrumb"><button data-action="nav" data-view="vet-tutores">Tutores</button>${ic('chevronRight','icon-sm')}<span>${t.name}</span></div>
     <div class="card pad-lg" style="display:flex;align-items:center;gap:18px;margin-bottom:24px;flex-wrap:wrap;">
-      <span class="avatar" style="width:64px;height:64px;font-size:20px;background:var(--primary-soft);color:var(--primary-dark);">${initials(t.name)}</span>
+      ${tutorPhotoUploadWrap(t, 64, 20)}
       <div style="flex:1;min-width:200px;">
         <h1 style="font-size:22px;margin:0 0 6px;">${t.name}</h1>
         <div style="color:var(--ink-muted);font-size:14px;display:flex;gap:16px;flex-wrap:wrap;">
@@ -1661,7 +1707,7 @@ function renderVetPetDetail(petId){
     <div class="card pad-lg" style="margin-bottom:24px;">
       <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;">
         <div style="display:flex;gap:16px;">
-          <span class="pet-photo" style="width:76px;height:76px;font-size:36px;background:${SPECIES_COLOR[p.species]};">${SPECIES_EMOJI[p.species]}</span>
+          ${petPhotoUploadWrap(p, 76, 36)}
           <div>
             <h1 style="font-size:24px;margin:0 0 4px;">${p.name}</h1>
             <div style="color:var(--ink-muted);font-size:14.5px;margin-bottom:8px;">${p.breed} · ${ageFromBirth(p.birth)}</div>
@@ -2045,6 +2091,7 @@ function renderModal(){
     case 'vacina': inner = modalVacina(m.props); break;
     case 'concluir-exame': inner = modalConcluirExame(m.props); break;
     case 'novo-pet': inner = modalNovoPet(m.props); break;
+    case 'novo-pet-tutor': inner = modalNovoPetTutor(m.props); break;
     case 'novo-tutor': inner = modalNovoTutor(m.props); break;
     case 'edit-pet': inner = modalEditPet(m.props); break;
     case 'timeline-detail': inner = modalTimelineDetail(m.props); break;
@@ -2305,6 +2352,33 @@ function modalNovoPet(props){
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
       <button class="btn btn-primary" data-action="save-novo-pet">${ic('check','icon-sm')}Cadastrar pet</button>
+    </div>
+  </div>`;
+}
+
+function modalNovoPetTutor(props){
+  return `
+  <div class="modal" data-modal-inner style="max-width:600px;">
+    <div class="modal-head"><h3>Cadastrar meu pet</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="field"><label>Nome</label><input id="nptu_name" placeholder="Ex: Mel"></div>
+        <div class="field"><label>Espécie</label><select id="nptu_species"><option>Cachorro</option><option>Gato</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Raça</label><input id="nptu_breed" placeholder="Ex: Golden Retriever"></div>
+        <div class="field"><label>Sexo</label><select id="nptu_sex"><option>Fêmea</option><option>Macho</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Data de nascimento</label><input type="date" id="nptu_birth" value="2023-01-01"></div>
+        <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="nptu_weight" placeholder="Ex: 12.5"></div>
+      </div>
+      <div class="form-row single"><div class="field"><label>Microchip</label><input id="nptu_chip" placeholder="Opcional"></div></div>
+      <div class="form-row single"><div class="field"><label>Observações</label><textarea id="nptu_notes" placeholder="Alergias, cuidados especiais..."></textarea></div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+      <button class="btn btn-primary" data-action="save-novo-pet-tutor">${ic('check','icon-sm')}Cadastrar meu pet</button>
     </div>
   </div>`;
 }
@@ -2718,7 +2792,7 @@ function renderTutorDashboard(){
       <div class="chip-row">
         ${pets.map(p=>`
           <div class="pet-chip" data-action="nav" data-view="tutor-pet-detail" data-pet-id="${p.id}">
-            <span class="pet-photo" style="width:44px;height:44px;font-size:22px;background:${SPECIES_COLOR[p.species]};">${SPECIES_EMOJI[p.species]}</span>
+            ${petAvatarHtml(p, 44, 22)}
             <div><b style="font-size:14px;">${p.name}</b><div style="font-size:12px;color:var(--ink-muted);">${p.breed} · ${ageFromBirth(p.birth)}</div></div>
           </div>`).join('')}
       </div>
@@ -2783,15 +2857,16 @@ function renderTutorPets(){
       <div class="row1"><h1 style="margin:0;font-size:20px;">Meus Pets 🐾</h1><button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button></div>
     </div>
     <div class="tutor-body">
+      <button class="btn btn-primary btn-block" style="margin-bottom:16px;" data-action="open-novo-pet-tutor">${ic('plus','icon-sm')}Cadastrar meu pet</button>
       ${pets.length ? pets.map(p=>`
         <div class="card pad-md" style="display:flex;gap:14px;align-items:center;margin-bottom:12px;cursor:pointer;" data-action="nav" data-view="tutor-pet-detail" data-pet-id="${p.id}">
-          <span class="pet-photo" style="width:56px;height:56px;font-size:26px;background:${SPECIES_COLOR[p.species]};">${SPECIES_EMOJI[p.species]}</span>
+          ${petAvatarHtml(p, 56, 26)}
           <div style="flex:1;">
             <b style="font-size:15.5px;">${p.name}</b>
             <div style="font-size:12.5px;color:var(--ink-muted);">${p.breed} · ${ageFromBirth(p.birth)}</div>
           </div>
           ${ic('chevronRight','icon-sm')}
-        </div>`).join('') : `<div class="empty-state"><div class="eic">${ic('paw','icon-lg')}</div><h3>Nenhum pet vinculado</h3><p>Seu veterinário adicionará seus pets em breve.</p></div>`}
+        </div>`).join('') : `<div class="empty-state"><div class="eic">${ic('paw','icon-lg')}</div><h3>Nenhum pet ainda</h3><p>Cadastre seu primeiro pet para começar a acompanhar a saúde dele.</p></div>`}
     </div>
   `;
 }
@@ -2807,7 +2882,7 @@ function renderTutorPetDetail(petId){
         <button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button>
       </div>
       <div style="display:flex;align-items:center;gap:14px;margin-top:10px;">
-        <span class="pet-photo" style="width:60px;height:60px;font-size:28px;background:rgba(255,255,255,0.18);">${SPECIES_EMOJI[p.species]}</span>
+        ${petPhotoUploadWrap(p, 60, 28)}
         <div><h1 style="margin:0;font-size:21px;">${p.name}</h1><p style="margin:2px 0 0;">${p.breed} · ${ageFromBirth(p.birth)}</p></div>
       </div>
     </div>
@@ -3087,7 +3162,7 @@ function renderTutorPerfil(){
     </div>
     <div class="tutor-body">
       <div class="card pad-lg" style="text-align:center;">
-        <span class="avatar" style="width:64px;height:64px;font-size:22px;margin:0 auto 12px;background:var(--primary-soft);color:var(--primary-dark);">${initials(t.name)}</span>
+        <div style="margin:0 auto 12px;width:64px;">${tutorPhotoUploadWrap(t, 64, 22)}</div>
         <h2 style="font-size:18px;margin:0 0 4px;">${t.name}</h2>
         <p style="color:var(--ink-muted);font-size:13px;margin:0;">${t.email}</p>
       </div>
@@ -3134,8 +3209,6 @@ function attemptCloseModal(){
   if(MODAL_DIRTY){ STATE.confirmDiscard = true; render(); }
   else doCloseModal();
 }
-/* Re-renderiza mantendo a rolagem do modal (evita a sensação de "recarregar a página"
-   ao adicionar/remover itens dinâmicos como exames, vacinas e medicamentos). */
 function rerenderModalPreserveScroll(){
   const mb = document.querySelector('.modal-body');
   const scrollTop = mb ? mb.scrollTop : 0;
@@ -3143,12 +3216,27 @@ function rerenderModalPreserveScroll(){
   const mb2 = document.querySelector('.modal-body');
   if(mb2) mb2.scrollTop = scrollTop;
 }
+/* Mostra um aviso de erro de gravação e mantém o modal aberto (não perde
+   o que já foi digitado), soltando a trava de duplo clique. */
+function reportSaveError(err){
+  console.error('[PetFlow] Erro ao salvar:', err);
+  showToast('Não foi possível salvar: ' + (err && err.message ? err.message : 'tente novamente.'), 'warn');
+  SAVE_LOCK = false;
+  render();
+}
+function remoteReady(){ return (typeof SUPABASE_CONFIGURED !== 'undefined') && SUPABASE_CONFIGURED; }
 
 document.addEventListener('input', function(e){
   if(e.target.closest && e.target.closest('.modal')) MODAL_DIRTY = true;
 });
 document.addEventListener('change', function(e){
   if(e.target.closest && e.target.closest('.modal')) MODAL_DIRTY = true;
+  const fileInput = e.target.closest && e.target.closest('[data-photo-upload]');
+  if(fileInput && fileInput.files && fileInput.files[0]){
+    const kind = fileInput.dataset.photoUpload;
+    const id = kind==='pet' ? fileInput.dataset.petId : fileInput.dataset.tutorId;
+    if(typeof handlePhotoUpload === 'function') handlePhotoUpload(kind, id, fileInput.files[0]);
+  }
 });
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape' && STATE.modal){
@@ -3172,7 +3260,7 @@ document.addEventListener('dragleave', function(e){
   const cell = e.target.closest('[data-drop-slot]');
   if(cell) cell.classList.remove('drag-over');
 });
-document.addEventListener('drop', function(e){
+document.addEventListener('drop', async function(e){
   const cell = e.target.closest('[data-drop-slot]');
   if(!cell) return;
   e.preventDefault();
@@ -3183,11 +3271,18 @@ document.addEventListener('drop', function(e){
   const date = cell.dataset.date, time = cell.dataset.time;
   if(!isSlotFree(date, time, apptId)){ showToast('Esse horário não está disponível.', 'warn'); return; }
   const a = DB.appointments.find(x=>x.id===apptId);
-  if(a){ a.date = date; a.time = time; showToast(`Consulta reagendada para ${fmtDateShort(date)} às ${time}.`); }
-  render();
+  if(!a) return;
+  const prevDate = a.date, prevTime = a.time;
+  a.date = date; a.time = time; render();
+  if(remoteReady()){
+    try{ await dbUpdateAppointment(apptId, {date, time}); showToast(`Consulta reagendada para ${fmtDateShort(date)} às ${time}.`); }
+    catch(err){ a.date = prevDate; a.time = prevTime; reportSaveError(err); }
+  } else {
+    showToast(`Consulta reagendada para ${fmtDateShort(date)} às ${time}.`);
+  }
 });
 
-document.addEventListener('click', function(e){
+document.addEventListener('click', async function(e){
   const actionEl = e.target.closest('[data-action]');
   if(!actionEl) return;
   const action = actionEl.dataset.action;
@@ -3234,6 +3329,7 @@ document.addEventListener('click', function(e){
     case 'open-vacina': MODAL_DIRTY=false; openModal('vacina', {petId: d.petId}); break;
     case 'open-concluir-exame': MODAL_DIRTY=false; openModal('concluir-exame', {examId: d.examId}); break;
     case 'open-novo-pet': MODAL_DIRTY=false; openModal('novo-pet', {}); break;
+    case 'open-novo-pet-tutor': MODAL_DIRTY=false; openModal('novo-pet-tutor', {}); break;
     case 'open-novo-tutor': MODAL_DIRTY=false; openModal('novo-tutor', {}); break;
     case 'open-edit-pet': MODAL_DIRTY=false; openModal('edit-pet', {petId: d.petId}); break;
     case 'open-timeline-detail': openModal('timeline-detail', {type: d.type, id: d.id}); break;
@@ -3275,22 +3371,39 @@ document.addEventListener('click', function(e){
     }
     case 'toggle-day-closed': {
       const wasClosed = isDateClosed(d.date);
-      toggleClosedDate(d.date, wasClosed ? '' : val('gd_reason'));
-      showToast(wasClosed ? 'Dia reaberto na agenda.' : 'Dia fechado — o tutor não poderá agendar nesta data.');
+      const reason = wasClosed ? '' : val('gd_reason');
+      toggleClosedDate(d.date, reason);
       MODAL_DIRTY = false;
       rerenderModalPreserveScroll();
+      showToast(wasClosed ? 'Dia reaberto na agenda.' : 'Dia fechado — o tutor não poderá agendar nesta data.');
+      if(remoteReady()){
+        try{ await dbToggleClosedDate(d.date, reason, !wasClosed); }
+        catch(err){ toggleClosedDate(d.date, reason); reportSaveError(err); }
+      }
       break;
     }
     case 'toggle-slot-block': {
+      const wasBlocked = DB.blockedSlots.some(b=>b.date===d.date && b.time===d.time);
       toggleBlockedSlot(d.date, d.time);
       MODAL_DIRTY = false;
       rerenderModalPreserveScroll();
+      if(remoteReady()){
+        try{ await dbToggleBlockedSlot(d.date, d.time, !wasBlocked); }
+        catch(err){ toggleBlockedSlot(d.date, d.time); reportSaveError(err); }
+      }
       break;
     }
     case 'block-range': {
       const from = val('gd_from'), to = val('gd_to');
-      if(from && to && from < to){ blockSlotRange(d.date, from, to); showToast(`Horários de ${from} a ${to} bloqueados.`); }
-      else showToast('Selecione um intervalo válido (início antes do fim).', 'warn');
+      if(from && to && from < to){
+        const slots = calSlotList().filter(t=>t>=from && t<to);
+        blockSlotRange(d.date, from, to);
+        showToast(`Horários de ${from} a ${to} bloqueados.`);
+        if(remoteReady()){
+          try{ await dbBlockSlotRange(d.date, slots); }
+          catch(err){ reportSaveError(err); }
+        }
+      } else showToast('Selecione um intervalo válido (início antes do fim).', 'warn');
       MODAL_DIRTY = false;
       rerenderModalPreserveScroll();
       break;
@@ -3300,30 +3413,51 @@ document.addEventListener('click', function(e){
       const petId = val('na_pet'), date = val('na_date'), time = val('na_time');
       if(!isSlotFree(date, time, null)){
         showToast('Esse horário não está mais disponível.', 'warn');
-      } else {
-        DB.appointments.push({ id: uid('a'), petId, date, time, type: val('na_type')||'Consulta', modality: val('na_modality')||'Clínica', status:'Confirmado' });
+        SAVE_LOCK = false; render(); break;
+      }
+      const appt = { id: uid('a'), petId, date, time, type: val('na_type')||'Consulta', modality: val('na_modality')||'Clínica', status:'Confirmado' };
+      DB.appointments.push(appt);
+      try{
+        if(remoteReady()) await dbInsertAppointment(appt);
         showToast('Agendamento criado.');
         doCloseModal();
+      } catch(err){
+        DB.appointments = DB.appointments.filter(x=>x.id!==appt.id);
+        reportSaveError(err); break;
       }
       render();
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'save-appt-time': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
       const a = DB.appointments.find(x=>x.id===d.apptId);
       const date = val('ad_date'), time = val('ad_time');
-      if(a){
-        if(!isSlotFree(date, time, a.id)) showToast('Esse horário não está disponível.', 'warn');
-        else { a.date = date; a.time = time; showToast('Horário atualizado.'); doCloseModal(); }
-      }
+      if(!a){ SAVE_LOCK=false; break; }
+      if(!isSlotFree(date, time, a.id)){ showToast('Esse horário não está disponível.', 'warn'); SAVE_LOCK=false; render(); break; }
+      const prevDate=a.date, prevTime=a.time;
+      a.date=date; a.time=time;
+      try{
+        if(remoteReady()) await dbUpdateAppointment(a.id, {date, time});
+        showToast('Horário atualizado.');
+        doCloseModal();
+      } catch(err){ a.date=prevDate; a.time=prevTime; reportSaveError(err); break; }
       render();
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'cancel-appt': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
       const a = DB.appointments.find(x=>x.id===d.apptId);
-      if(a){ a.status='Cancelado'; showToast('Agendamento cancelado.'); }
-      doCloseModal();
+      if(!a){ SAVE_LOCK=false; break; }
+      const prev = a.status; a.status='Cancelado';
+      try{
+        if(remoteReady()) await dbUpdateAppointment(a.id, {status:'Cancelado'});
+        showToast('Agendamento cancelado.');
+        doCloseModal();
+      } catch(err){ a.status=prev; reportSaveError(err); break; }
       render();
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
 
@@ -3354,28 +3488,50 @@ document.addEventListener('click', function(e){
         conduct: b.conduct || '—', notes:'',
         valor: parseFloat(b.valor) || 0,
       };
-      DB.consultations.push(c);
-      const pet = getPet(petId); pet.weight = c.weight;
-      if(c.valor>0) createPayment({petId, date:c.date, service:'Consulta', valor:c.valor, refType:'consulta', refId:c.id});
+      const pet = getPet(petId);
+      const prevWeight = pet.weight;
+      const pendingPayments = [];
+      const pendingExams = [];
+      const pendingVaccines = [];
 
-      let countExams=0, countVacs=0;
-      b.exams.forEach(ex=>{
-        if(!ex.type) return;
-        const rec = { id: uid('e'), petId, date: c.date, type: ex.type, valor: parseFloat(ex.valor)||0, description: ex.obs||'', result:'', observacoes:'', anexo:'', status:'Solicitado' };
-        DB.exams.push(rec); countExams++;
-        if(rec.valor>0) createPayment({petId, date:c.date, service:`Exame — ${rec.type}`, valor:rec.valor, refType:'exame', refId:rec.id});
-      });
-      b.vaccines.forEach(vc=>{
-        if(!vc.name) return;
-        const rec = { id: uid('v'), petId, vaccine: vc.name, date: vc.date||c.date, batch: vc.batch||'—', nextDate: vc.next||'2027-09-01', valor: parseFloat(vc.valor)||0, notes:'' };
-        DB.vaccines.push(rec); countVacs++;
-        if(rec.valor>0) createPayment({petId, date:rec.date, service:`Vacina — ${rec.vaccine}`, valor:rec.valor, refType:'vacina', refId:rec.id});
-      });
+      try{
+        if(remoteReady()) await dbInsertConsultation(c);
+        DB.consultations.push(c);
+        pet.weight = c.weight;
+        if(remoteReady() && pet.weight !== prevWeight) await dbUpdatePet(petId, {weight: pet.weight});
+        if(c.valor>0){
+          const pay = createPayment({petId, date:c.date, service:'Consulta', valor:c.valor, refType:'consulta', refId:c.id});
+          if(pay){ pendingPayments.push(pay); if(remoteReady()) await dbInsertPayment(pay); }
+        }
 
-      DRAFT_AT = null;
-      doCloseModal();
-      showToast(`Atendimento salvo${countExams?` · ${countExams} exame(s)`:''}${countVacs?` · ${countVacs} vacina(s)`:''}.`);
-      navigate('vet-pet-detail', {petId});
+        for(const ex of b.exams){
+          if(!ex.type) continue;
+          const rec = { id: uid('e'), petId, date: c.date, type: ex.type, valor: parseFloat(ex.valor)||0, description: ex.obs||'', result:'', observacoes:'', anexo:'', status:'Solicitado' };
+          if(remoteReady()) await dbInsertExam(rec);
+          DB.exams.push(rec); pendingExams.push(rec);
+          if(rec.valor>0){
+            const pay = createPayment({petId, date:c.date, service:`Exame — ${rec.type}`, valor:rec.valor, refType:'exame', refId:rec.id});
+            if(pay && remoteReady()) await dbInsertPayment(pay);
+          }
+        }
+        for(const vc of b.vaccines){
+          if(!vc.name) continue;
+          const rec = { id: uid('v'), petId, vaccine: vc.name, date: vc.date||c.date, batch: vc.batch||'—', nextDate: vc.next||'2027-09-01', valor: parseFloat(vc.valor)||0, notes:'' };
+          if(remoteReady()) await dbInsertVaccine(rec);
+          DB.vaccines.push(rec); pendingVaccines.push(rec);
+          if(rec.valor>0){
+            const pay = createPayment({petId, date:rec.date, service:`Vacina — ${rec.vaccine}`, valor:rec.valor, refType:'vacina', refId:rec.id});
+            if(pay && remoteReady()) await dbInsertPayment(pay);
+          }
+        }
+
+        DRAFT_AT = null;
+        doCloseModal();
+        showToast(`Atendimento salvo${pendingExams.length?` · ${pendingExams.length} exame(s)`:''}${pendingVaccines.length?` · ${pendingVaccines.length} vacina(s)`:''}.`);
+        navigate('vet-pet-detail', {petId});
+      } catch(err){
+        reportSaveError(err); break;
+      }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3385,11 +3541,14 @@ document.addEventListener('click', function(e){
       const petId = DRAFT_RX.petId;
       const meds = DRAFT_RX.meds.filter(m=>m.name).map(m=>({ name:m.name, dosage:m.dosage||'—', freq:m.freq||'—', duration:m.duration||'—', route:m.route||'Oral', orientations:m.orientations||'' }));
       const r = { id: uid('r'), petId, date: DRAFT_RX.date || '2026-09-01', meds: meds.length?meds:[{name:'Medicamento',dosage:'—',freq:'—',duration:'—',route:'Oral',orientations:''}], orientations:'' };
-      DB.prescriptions.push(r);
-      DRAFT_RX = null;
-      doCloseModal();
-      showToast(`Receita gerada com ${r.meds.length} medicamento${r.meds.length>1?'s':''}.`);
-      navigate('vet-pet-detail', {petId});
+      try{
+        if(remoteReady()) await dbInsertPrescription(r);
+        DB.prescriptions.push(r);
+        DRAFT_RX = null;
+        doCloseModal();
+        showToast(`Receita gerada com ${r.meds.length} medicamento${r.meds.length>1?'s':''}.`);
+        navigate('vet-pet-detail', {petId});
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3398,11 +3557,17 @@ document.addEventListener('click', function(e){
       const petId = val('ex_pet');
       const valor = num('ex_valor');
       const ex = { id: uid('e'), petId, date: val('ex_date') || '2026-09-01', type: val('ex_type')||'Exame', valor, description: val('ex_desc'), result:'', observacoes:'', anexo:'', status:'Solicitado' };
-      DB.exams.push(ex);
-      if(valor>0) createPayment({petId, date:ex.date, service:`Exame — ${ex.type}`, valor, refType:'exame', refId:ex.id});
-      doCloseModal();
-      showToast('Exame registrado — status "Solicitado".');
-      navigate('vet-pet-detail', {petId});
+      try{
+        if(remoteReady()) await dbInsertExam(ex);
+        DB.exams.push(ex);
+        if(valor>0){
+          const pay = createPayment({petId, date:ex.date, service:`Exame — ${ex.type}`, valor, refType:'exame', refId:ex.id});
+          if(pay && remoteReady()) await dbInsertPayment(pay);
+        }
+        doCloseModal();
+        showToast('Exame registrado — status "Solicitado".');
+        navigate('vet-pet-detail', {petId});
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3411,32 +3576,47 @@ document.addEventListener('click', function(e){
       const petId = val('vc_pet');
       const valor = num('vc_valor');
       const v = { id: uid('v'), petId, vaccine: val('vc_name')||'Vacina', date: val('vc_date')||'2026-09-01', batch: val('vc_batch')||'—', nextDate: val('vc_next')||'2027-09-01', valor, notes: val('vc_notes') };
-      DB.vaccines.push(v);
-      if(valor>0) createPayment({petId, date:v.date, service:`Vacina — ${v.vaccine}`, valor, refType:'vacina', refId:v.id});
-      doCloseModal();
-      showToast('Vacinação registrada.');
-      navigate('vet-pet-detail', {petId});
+      try{
+        if(remoteReady()) await dbInsertVaccine(v);
+        DB.vaccines.push(v);
+        if(valor>0){
+          const pay = createPayment({petId, date:v.date, service:`Vacina — ${v.vaccine}`, valor, refType:'vacina', refId:v.id});
+          if(pay && remoteReady()) await dbInsertPayment(pay);
+        }
+        doCloseModal();
+        showToast('Vacinação registrada.');
+        navigate('vet-pet-detail', {petId});
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'iniciar-exame': {
       const ex = DB.exams.find(x=>x.id===d.examId);
-      if(ex){ ex.status='Em andamento'; showToast('Exame iniciado.'); }
-      render();
+      if(!ex) break;
+      const prev = ex.status; ex.status='Em andamento'; render();
+      if(remoteReady()){
+        try{ await dbUpdateExam(ex.id, {status:'Em andamento'}); showToast('Exame iniciado.'); }
+        catch(err){ ex.status = prev; reportSaveError(err); }
+      } else showToast('Exame iniciado.');
       break;
     }
     case 'save-concluir-exame': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const ex = DB.exams.find(x=>x.id===d.examId);
-      if(ex){
-        ex.result = val('ce_result') || 'Resultado sem alterações relevantes.';
-        ex.observacoes = val('ce_obs');
-        ex.anexo = ex.anexo || `${ex.type.toLowerCase().replace(/\s+/g,'_')}.pdf`;
-        ex.status = 'Resultado disponível';
-      }
-      doCloseModal();
-      showToast('Exame concluído — resultado disponível para o tutor.');
-      navigate('vet-pet-detail', {petId: ex.petId});
+      if(!ex){ SAVE_LOCK=false; break; }
+      const fields = {
+        result: val('ce_result') || 'Resultado sem alterações relevantes.',
+        observacoes: val('ce_obs'),
+        anexo: ex.anexo || `${ex.type.toLowerCase().replace(/\s+/g,'_')}.pdf`,
+        status: 'Resultado disponível',
+      };
+      try{
+        if(remoteReady()) await dbUpdateExam(ex.id, fields);
+        Object.assign(ex, fields);
+        doCloseModal();
+        showToast('Exame concluído — resultado disponível para o tutor.');
+        navigate('vet-pet-detail', {petId: ex.petId});
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3446,11 +3626,31 @@ document.addEventListener('click', function(e){
       const id = uid('p');
       const species = val('np_species') || 'Cachorro';
       const p = { id, name: val('np_name')||'Novo pet', species, breed: val('np_breed')||'SRD', sex: val('np_sex')||'Fêmea', birth: val('np_birth')||'2023-01-01', weight: parseFloat(val('np_weight'))||1, microchip: val('np_chip'), notes: val('np_notes'), tutorId: val('np_tutor')||DB.tutors[0].id };
-      DB.pets.push(p);
-      const tt = getTutor(p.tutorId); if(tt && !tt.pets.includes(id)) tt.pets.push(id);
-      doCloseModal();
-      showToast('Pet cadastrado com sucesso.');
-      navigate('vet-pet-detail', {petId: id});
+      try{
+        if(remoteReady()) await dbInsertPet(p);
+        DB.pets.push(p);
+        const tt = getTutor(p.tutorId); if(tt && !tt.pets.includes(id)) tt.pets.push(id);
+        doCloseModal();
+        showToast('Pet cadastrado com sucesso.');
+        navigate('vet-pet-detail', {petId: id});
+      } catch(err){ reportSaveError(err); break; }
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+    case 'save-novo-pet-tutor': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const id = uid('p');
+      const species = val('nptu_species') || 'Cachorro';
+      const tutorId = STATE.currentTutorId;
+      const p = { id, name: val('nptu_name')||'Meu pet', species, breed: val('nptu_breed')||'SRD', sex: val('nptu_sex')||'Fêmea', birth: val('nptu_birth')||'2023-01-01', weight: parseFloat(val('nptu_weight'))||1, microchip: val('nptu_chip'), notes: val('nptu_notes'), tutorId };
+      try{
+        if(remoteReady()) await dbInsertPet(p);
+        DB.pets.push(p);
+        const tt = getTutor(tutorId); if(tt && !tt.pets.includes(id)) tt.pets.push(id);
+        doCloseModal();
+        showToast('Pet cadastrado com sucesso!');
+        navigate('tutor-pet-detail', {petId: id});
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3458,21 +3658,29 @@ document.addEventListener('click', function(e){
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const id = uid('t');
       const t = { id, name: val('nt_name')||'Novo tutor', phone: val('nt_phone')||'—', email: val('nt_email')||'—', pets: [] };
-      DB.tutors.push(t);
-      doCloseModal();
-      showToast('Tutor cadastrado com sucesso.');
-      navigate('vet-tutores');
+      try{
+        if(remoteReady()) await dbInsertTutor(t);
+        DB.tutors.push(t);
+        doCloseModal();
+        showToast('Tutor cadastrado com sucesso.');
+        navigate('vet-tutores');
+      } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'save-edit-pet': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const p = getPet(d.petId);
-      p.name = val('ep_name')||p.name; p.breed = val('ep_breed')||p.breed;
-      p.weight = parseFloat(val('ep_weight'))||p.weight; p.sex = val('ep_sex')||p.sex; p.notes = val('ep_notes');
-      doCloseModal();
-      showToast('Alterações salvas.');
-      navigate('vet-pet-detail', {petId: p.id});
+      if(!p){ SAVE_LOCK=false; break; }
+      const fields = { name: val('ep_name')||p.name, breed: val('ep_breed')||p.breed, weight: parseFloat(val('ep_weight'))||p.weight, sex: val('ep_sex')||p.sex, notes: val('ep_notes') };
+      const prev = { name:p.name, breed:p.breed, weight:p.weight, sex:p.sex, notes:p.notes };
+      Object.assign(p, fields);
+      try{
+        if(remoteReady()) await dbUpdatePet(p.id, fields);
+        doCloseModal();
+        showToast('Alterações salvas.');
+        navigate('vet-pet-detail', {petId: p.id});
+      } catch(err){ Object.assign(p, prev); reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
@@ -3480,27 +3688,55 @@ document.addEventListener('click', function(e){
     case 'filter-timeline': STATE.petFilter = d.filter; render(); break;
     case 'finance-filter': STATE.financeFilter = d.filter; render(); break;
 
-    case 'confirm-appt': { const a = DB.appointments.find(x=>x.id===d.apptId); if(a){a.status='Confirmado'; showToast('Atendimento confirmado.');} doCloseModal(); render(); break; }
-    case 'complete-appt': { const a = DB.appointments.find(x=>x.id===d.apptId); if(a){a.status='Realizado'; showToast('Atendimento marcado como realizado.');} doCloseModal(); render(); break; }
+    case 'confirm-appt': {
+      const a = DB.appointments.find(x=>x.id===d.apptId);
+      if(!a) break;
+      const prev = a.status; a.status='Confirmado'; doCloseModal();
+      if(remoteReady()){
+        try{ await dbUpdateAppointment(a.id, {status:'Confirmado'}); showToast('Atendimento confirmado.'); }
+        catch(err){ a.status = prev; reportSaveError(err); }
+      } else showToast('Atendimento confirmado.');
+      render();
+      break;
+    }
+    case 'complete-appt': {
+      const a = DB.appointments.find(x=>x.id===d.apptId);
+      if(!a) break;
+      const prev = a.status; a.status='Realizado'; doCloseModal();
+      if(remoteReady()){
+        try{ await dbUpdateAppointment(a.id, {status:'Realizado'}); showToast('Atendimento marcado como realizado.'); }
+        catch(err){ a.status = prev; reportSaveError(err); }
+      } else showToast('Atendimento marcado como realizado.');
+      render();
+      break;
+    }
 
     case 'save-recusar-agendamento': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const a = DB.appointments.find(x=>x.id===d.apptId);
-      if(a){
-        const suggestions = suggestSlots(a.date, a.id, 3);
-        a.status = 'Recusado';
-        a.proposedSlots = suggestions;
+      if(!a){ SAVE_LOCK=false; break; }
+      const suggestions = suggestSlots(a.date, a.id, 3);
+      const prevStatus = a.status, prevSlots = a.proposedSlots;
+      a.status = 'Recusado'; a.proposedSlots = suggestions;
+      try{
+        if(remoteReady()) await dbUpdateAppointment(a.id, {status:'Recusado', proposedSlots: suggestions});
         showToast('Agendamento recusado. Sugestões enviadas ao tutor.', 'warn');
-      }
-      doCloseModal();
+        doCloseModal();
+      } catch(err){ a.status = prevStatus; a.proposedSlots = prevSlots; reportSaveError(err); break; }
       render();
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'pick-suggested-slot': {
       const a = DB.appointments.find(x=>x.id===d.apptId);
-      if(a){ a.date = d.date; a.time = d.time; a.status='Confirmado'; a.proposedSlots=null; showToast('Agendamento confirmado 🐾'); }
+      if(!a) break;
+      const prevDate=a.date, prevTime=a.time, prevStatus=a.status, prevSlots=a.proposedSlots;
+      a.date = d.date; a.time = d.time; a.status='Confirmado'; a.proposedSlots=null;
       render();
+      if(remoteReady()){
+        try{ await dbUpdateAppointment(a.id, {date:d.date, time:d.time, status:'Confirmado', proposedSlots:null}); showToast('Agendamento confirmado 🐾'); }
+        catch(err){ a.date=prevDate; a.time=prevTime; a.status=prevStatus; a.proposedSlots=prevSlots; reportSaveError(err); }
+      } else showToast('Agendamento confirmado 🐾');
       break;
     }
 
@@ -3509,9 +3745,14 @@ document.addEventListener('click', function(e){
     case 'save-registrar-pagamento': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       if(DRAFT_PAY && DRAFT_PAY.payIds && DRAFT_PAY.payIds.length){
-        const total = DRAFT_PAY.payIds.reduce((s,id)=>{ const p=DB.payments.find(x=>x.id===id); return s+(p?p.valor:0); },0);
-        registerFullPayment(DRAFT_PAY.payIds, DRAFT_PAY.forma, DRAFT_PAY.parcelas);
-        showToast(`Pagamento de ${fmtMoney(total)} confirmado — status Pago.`);
+        const ids = DRAFT_PAY.payIds, forma = DRAFT_PAY.forma, parcelas = DRAFT_PAY.parcelas;
+        const total = ids.reduce((s,id)=>{ const p=DB.payments.find(x=>x.id===id); return s+(p?p.valor:0); },0);
+        const paidDate = NOW_ISO_DATE;
+        try{
+          if(remoteReady()) await dbUpdatePaymentsStatus(ids, forma, parcelas, paidDate);
+          registerFullPayment(ids, forma, parcelas, paidDate);
+          showToast(`Pagamento de ${fmtMoney(total)} confirmado — status Pago.`);
+        } catch(err){ DRAFT_PAY=null; reportSaveError(err); break; }
       }
       DRAFT_PAY = null;
       doCloseModal();
@@ -3535,10 +3776,16 @@ document.addEventListener('click', function(e){
       break;
     }
     case 'agend-confirm': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
       const b = STATE.booking;
-      DB.appointments.push({ id: uid('a'), petId: b.petId, date: b.date, time: b.time, type: b.service, modality: b.modality, status: 'Aguardando confirmação' });
-      STATE.booking.step = 6;
+      const appt = { id: uid('a'), petId: b.petId, date: b.date, time: b.time, type: b.service, modality: b.modality, status: 'Aguardando confirmação' };
+      try{
+        if(remoteReady()) await dbInsertAppointment(appt);
+        DB.appointments.push(appt);
+        STATE.booking.step = 6;
+      } catch(err){ reportSaveError(err); break; }
       render();
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
     case 'agend-finish': {
