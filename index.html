@@ -2448,6 +2448,22 @@ function modalVacina(props){
   </div>`;
 }
 
+/* Upload real do laudo/anexo do exame (Supabase Storage, bucket "photos",
+   pasta "exams/") — antes era só uma caixa decorativa que não enviava nada. */
+function examAttachmentUploadHtml(e){
+  const url = e.anexo && /^https?:\/\//.test(e.anexo) ? e.anexo : null;
+  return `
+  <div style="border:1.5px dashed var(--line-strong);border-radius:12px;padding:16px;text-align:center;">
+    ${url
+      ? `<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;font-size:13.5px;">${ic('file','icon-sm')}<a href="${url}" target="_blank" rel="noopener" style="color:var(--primary-dark);font-weight:700;">Ver arquivo anexado</a></div>`
+      : `<div style="color:var(--ink-muted);font-size:13px;margin-bottom:12px;">${ic('upload','icon-sm')}<div style="margin-top:6px;">Nenhum arquivo anexado ainda</div></div>`}
+    <label class="btn btn-ghost btn-sm" style="cursor:pointer;display:inline-flex;">
+      ${ic('upload','icon-sm')}${url ? 'Substituir arquivo' : 'Anexar arquivo (PDF ou imagem)'}
+      <input type="file" accept="application/pdf,image/*" style="display:none;" data-exam-attachment="${e.id}">
+    </label>
+  </div>`;
+}
+
 /* ---------- Concluir exame ---------- */
 function modalConcluirExame(props){
   const e = DB.exams.find(x=>x.id===props.examId);
@@ -2462,9 +2478,7 @@ function modalConcluirExame(props){
       <div class="form-row single">
         <div class="field">
           <label>Laudo / anexo</label>
-          <div style="border:1.5px dashed var(--line-strong);border-radius:12px;padding:20px;text-align:center;color:var(--ink-muted);font-size:13px;">
-            ${ic('upload','icon-sm')}<div style="margin-top:6px;">Simulação de upload — nenhum arquivo real será enviado</div>
-          </div>
+          ${examAttachmentUploadHtml(e)}
         </div>
       </div>
     </div>
@@ -2703,7 +2717,7 @@ function modalTimelineDetail(props){
         <span class="badge ${e.status==='Resultado disponível'?'badge-success':e.status==='Em andamento'?'badge-warn':'badge-neutral'}" style="margin-bottom:8px;"><span class="badge-dot"></span>${e.status}</span>
         <p style="margin:8px 0 0;font-size:14.5px;">${e.result||'Aguardando realização/laboratório.'}</p>
         ${e.observacoes?`<p style="margin:8px 0 0;font-size:13px;color:var(--ink-muted);">${e.observacoes}</p>`:''}
-        ${e.anexo?`<div style="margin-top:10px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--primary-dark);"><span>${ic('file','icon-sm')}</span>${e.anexo}</div>`:''}
+        ${e.anexo?`<div style="margin-top:10px;display:flex;align-items:center;gap:8px;font-size:13px;">${ic('file','icon-sm')}${/^https?:\/\//.test(e.anexo) ? `<a href="${e.anexo}" target="_blank" rel="noopener" style="color:var(--primary-dark);font-weight:700;">Ver laudo anexado</a>` : `<span style="color:var(--primary-dark);">${e.anexo}</span>`}</div>`:''}
       </div>
       ${e.valor ? `<div class="form-section" style="margin-bottom:0;"><div class="fs-title">Pagamento</div>${moneyBadge('exame', e.id, e.valor)}</div>` : ''}
     `;
@@ -3461,6 +3475,11 @@ document.addEventListener('change', function(e){
     const id = kind==='pet' ? fileInput.dataset.petId : fileInput.dataset.tutorId;
     if(typeof handlePhotoUpload === 'function') handlePhotoUpload(kind, id, fileInput.files[0]);
   }
+  const examFileInput = e.target.closest && e.target.closest('[data-exam-attachment]');
+  if(examFileInput && examFileInput.files && examFileInput.files[0]){
+    const examId = examFileInput.dataset.examAttachment;
+    if(typeof handleExamAttachmentUpload === 'function') handleExamAttachmentUpload(examId, examFileInput.files[0]);
+  }
 });
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){
@@ -3834,7 +3853,6 @@ document.addEventListener('click', async function(e){
       const fields = {
         result: val('ce_result') || 'Resultado sem alterações relevantes.',
         observacoes: val('ce_obs'),
-        anexo: ex.anexo || `${ex.type.toLowerCase().replace(/\s+/g,'_')}.pdf`,
         status: 'Resultado disponível',
       };
       try{
