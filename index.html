@@ -721,6 +721,123 @@ function initials(name){
   return name.split(' ').filter(Boolean).slice(0,2).map(s=>s[0]).join('').toUpperCase();
 }
 
+/* ---------- CPF / cadastro único do tutor ----------
+   Utilidades de máscara, validação e busca usadas no cadastro de
+   tutor para evitar duplicidade (mesmo tutor cadastrado por mais de
+   um(a) veterinário(a)). Ver PASSO 1 do assistente "Cadastrar pet". */
+function onlyDigits(s){ return (s||'').replace(/\D/g,''); }
+
+function formatCPF(v){
+  const d = onlyDigits(v).slice(0,11);
+  if(d.length > 9) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+  if(d.length > 6) return d.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+  if(d.length > 3) return d.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+  return d;
+}
+
+// Validação do dígito verificador do CPF (algoritmo padrão da Receita).
+function isValidCPF(v){
+  const d = onlyDigits(v);
+  if(d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  let sum = 0;
+  for(let i=0;i<9;i++) sum += parseInt(d[i],10) * (10-i);
+  let rev = 11 - (sum % 11); if(rev >= 10) rev = 0;
+  if(rev !== parseInt(d[9],10)) return false;
+  sum = 0;
+  for(let i=0;i<10;i++) sum += parseInt(d[i],10) * (11-i);
+  rev = 11 - (sum % 11); if(rev >= 10) rev = 0;
+  return rev === parseInt(d[10],10);
+}
+
+// Mostra só o suficiente para o(a) veterinário(a) confirmar que é a
+// pessoa certa, sem expor o dado completo antes de selecionar o tutor.
+function maskCPF(cpf){
+  const d = onlyDigits(cpf);
+  if(d.length !== 11) return cpf || '—';
+  return `${d.slice(0,3)}.***.***-${d.slice(9,11)}`;
+}
+function maskEmail(email){
+  if(!email || email.indexOf('@') < 0) return email || '—';
+  const [user, domain] = email.split('@');
+  const visible = user.slice(0, Math.min(2, user.length));
+  return `${visible}${'*'.repeat(Math.max(user.length-visible.length,1))}@${domain}`;
+}
+function maskPhone(phone){
+  if(!phone) return '—';
+  const totalDigits = (phone.match(/\d/g)||[]).length;
+  if(totalDigits < 5) return phone;
+  let seen = 0;
+  return phone.replace(/\d/g, ch => { seen++; return seen > totalDigits-4 ? ch : '•'; });
+}
+
+function findTutorByCPF(cpfDigits){
+  if(!cpfDigits) return null;
+  return DB.tutors.find(t => t.cpf && onlyDigits(t.cpf) === cpfDigits) || null;
+}
+function findTutorByEmail(email){
+  if(!email) return null;
+  const e = email.trim().toLowerCase();
+  return DB.tutors.find(t => t.email && t.email.trim().toLowerCase() === e) || null;
+}
+// Erro de violação de unicidade do Postgres (ex: CPF ou e-mail já existe) —
+// usado como rede de segurança caso a checagem local não pegue (ex: dois
+// cadastros simultâneos de veterinários diferentes para o mesmo tutor).
+function isDuplicateKeyError(err){
+  return !!(err && (err.code === '23505' || /duplicate key|already exists/i.test(err.message||'')));
+}
+// Busca de tutor por CPF (se o texto tiver 11+ dígitos), ou por nome/e-mail
+// (substring, sem diferenciar maiúsculas/minúsculas).
+function searchTutors(query){
+  const q = (query||'').trim();
+  if(!q) return [];
+  const digits = onlyDigits(q);
+  if(digits.length >= 11) return DB.tutors.filter(t => t.cpf && onlyDigits(t.cpf) === digits.slice(0,11));
+  const ql = q.toLowerCase();
+  return DB.tutors.filter(t =>
+    (t.name && t.name.toLowerCase().includes(ql)) ||
+    (t.email && t.email.toLowerCase().includes(ql)) ||
+    (digits.length >= 3 && t.cpf && onlyDigits(t.cpf).includes(digits))
+  );
+}
+// Markup reutilizado no formulário de novo tutor (modal avulso e assistente).
+function tutorFormFieldsHtml(prefix, values){
+  values = values || {};
+  return `
+    <div class="form-row single"><div class="field"><label>Nome completo</label><input id="${prefix}_name" placeholder="Ex: Paola Fontoura" value="${values.name||''}"></div></div>
+    <div class="form-row">
+      <div class="field"><label>CPF <span style="color:var(--ink-faint);font-weight:400;">(opcional, recomendado)</span></label><input id="${prefix}_cpf" placeholder="000.000.000-00" maxlength="14" value="${values.cpf||''}" oninput="this.value=formatCPF(this.value);"></div>
+      <div class="field"><label>Telefone</label><input id="${prefix}_phone" placeholder="(11) 90000-0000" value="${values.phone||''}"></div>
+    </div>
+    <div class="form-row single"><div class="field"><label>E-mail</label><input id="${prefix}_email" placeholder="email@exemplo.com" value="${values.email||''}"></div></div>
+  `;
+}
+// Banner "tutor já cadastrado" com dados parcialmente mascarados — some
+// só depois que o(a) veterinário(a) confirmar a seleção.
+function tutorDupBannerHtml(dup, selectAction){
+  return `
+  <div class="badge badge-danger" style="display:block;white-space:normal;text-align:left;padding:12px 14px;line-height:1.6;margin-bottom:16px;">
+    <b>Tutor já cadastrado no sistema.</b>
+    <div style="margin-top:8px;font-weight:400;font-size:13px;display:flex;align-items:center;gap:10px;">
+      ${tutorAvatarHtml(dup, 32, 12)}
+      <span><b>${dup.name}</b><br>CPF: ${maskCPF(dup.cpf)} · ${maskEmail(dup.email)} · ${maskPhone(dup.phone)}</span>
+    </div>
+    <button class="btn btn-primary btn-sm" style="margin-top:10px;" data-action="${selectAction}" data-tutor-id="${dup.id}">Selecionar este tutor</button>
+  </div>`;
+}
+// Lista de resultados de busca de tutor, reutilizada no assistente de pet.
+function tutorSearchResultsHtml(results, selectAction){
+  if(!results.length) return `<div class="empty-state" style="padding:20px 0;"><p style="margin:0;">Nenhum tutor encontrado com essa busca.</p></div>`;
+  return results.map(t => `
+    <div class="card pad-md" style="margin-bottom:10px;display:flex;align-items:center;gap:12px;">
+      ${tutorAvatarHtml(t, 40, 14)}
+      <div style="flex:1;min-width:0;">
+        <b>${t.name}</b>
+        <div style="font-size:12.5px;color:var(--ink-muted);">CPF: ${maskCPF(t.cpf)} · ${maskEmail(t.email)} · ${maskPhone(t.phone)}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-action="${selectAction}" data-tutor-id="${t.id}">Selecionar</button>
+    </div>`).join('');
+}
+
 const SPECIES_EMOJI = { 'Cachorro':'🐶', 'Gato':'🐱' };
 const SPECIES_COLOR = { 'Cachorro':'#E2EFE9', 'Gato':'#FFE6D9' };
 
@@ -811,16 +928,16 @@ const APPT_SLOTS = ['09:00','10:30','11:00','14:00','15:30','16:00'];
 
 const DB = {
   vet: {
-    name: 'Dra. Ana Martins', firstName: 'Ana', crmv: 'CRMV-SP 34.812',
+    id: 'vet1', name: 'Dra. Ana Martins', firstName: 'Ana', crmv: 'CRMV-SP 34.812',
     clinic: 'Clínica Vida Animal', specialty: 'Clínica geral e domiciliar',
     email: 'ana.martins@petflow.app', phone: '(11) 98221-4477',
   },
   tutors: [
-    { id:'t1', name:'Paola Fontoura', phone:'(11) 99887-1122', email:'paola@email.com', pets:['p1'] },
-    { id:'t2', name:'Mariana Costa', phone:'(11) 98212-3344', email:'mariana@email.com', pets:['p3'] },
-    { id:'t3', name:'Carlos Eduardo', phone:'(11) 97733-5566', email:'carlos@email.com', pets:['p2'] },
-    { id:'t4', name:'Fernanda Lima', phone:'(11) 96654-7788', email:'fernanda@email.com', pets:['p4'] },
-    { id:'t5', name:'Juliana Prado', phone:'(11) 95521-9900', email:'juliana@email.com', pets:['p5'] },
+    { id:'t1', name:'Paola Fontoura', phone:'(11) 99887-1122', email:'paola@email.com', cpf:'111.111.111-11', pets:['p1'] },
+    { id:'t2', name:'Mariana Costa', phone:'(11) 98212-3344', email:'mariana@email.com', cpf:'222.222.222-22', pets:['p3'] },
+    { id:'t3', name:'Carlos Eduardo', phone:'(11) 97733-5566', email:'carlos@email.com', cpf:'333.333.333-33', pets:['p2'] },
+    { id:'t4', name:'Fernanda Lima', phone:'(11) 96654-7788', email:'fernanda@email.com', cpf:'444.444.444-44', pets:['p4'] },
+    { id:'t5', name:'Juliana Prado', phone:'(11) 95521-9900', email:'juliana@email.com', cpf:'555.555.555-55', pets:['p5'] },
   ],
   pets: [
     { id:'p1', name:'Mel', species:'Cachorro', breed:'Golden Retriever', sex:'Fêmea', birth:'2024-03-12', weight:24.5, microchip:'982000123456789', notes:'Levemente alérgica a frango.', tutorId:'t1' },
@@ -1710,8 +1827,10 @@ function renderVetTutorDetail(tutorId){
       </div>` : ''}
     </div>
 
-    <div class="section-title"><h2>Pets vinculados</h2></div>
-    <div class="grid grid-3">${pets.map(p=>renderPetCard(p)).join('')}</div>
+    <div class="section-title"><h2>Pets vinculados</h2>
+      <button class="btn btn-ghost btn-sm" data-action="open-novo-pet" data-tutor-id="${t.id}">${ic('plus','icon-sm')}Adicionar pet</button>
+    </div>
+    <div class="grid grid-3">${pets.length ? pets.map(p=>renderPetCard(p)).join('') : `<div class="empty-state" style="grid-column:1/-1;"><p style="margin:0;">Nenhum pet vinculado ainda.</p></div>`}</div>
   `;
 }
 /* ---------- Prontuário do Pet (Veterinário) ---------- */
@@ -2065,6 +2184,12 @@ function petOptions(selectedId){
 let DRAFT_AT = null;   // atendimento: {petId,date,modality,reason,anamnesis,weight,temp,hr,rr,tpc,hidratacao,mucosas,linfonodos,diagnosis,conduct,valor, exams:[], vaccines:[]}
 let DRAFT_RX = null;   // receita: {petId,date,meds:[...]}
 let DRAFT_PAY = null;  // pagamento: {payIds:[...], forma, parcelas} — parcelas é só informativo (condição do tutor)
+let NOVO_TUTOR_DUP = null; // tutor encontrado com o mesmo CPF/e-mail ao tentar cadastrar um novo (modal avulso "Cadastrar tutor")
+// Assistente "Cadastrar pet": passo 1 escolhe/cria o tutor, passo 2 escolhe/cria o pet, passo 3 confirma e abre o atendimento.
+let PET_WIZARD = null; // {step, tutorMode:'search'|'new-tutor', tutorId, query, results, searched, dupTutor, petMode:'choose'|'new-pet', petId}
+function freshPetWizard(tutorId){
+  return { step: tutorId ? 2 : 1, tutorMode:'search', tutorId: tutorId||null, query:'', results:[], searched:false, dupTutor:null, petMode:'choose', petId:null };
+}
 
 function freshDraftAt(petId){
   return { petId: petId || DB.pets[0].id, date:'2026-09-01', modality:'Clínica', reason:'', anamnesis:'',
@@ -2115,7 +2240,7 @@ function renderModal(){
     case 'exame': inner = modalExame(m.props); break;
     case 'vacina': inner = modalVacina(m.props); break;
     case 'concluir-exame': inner = modalConcluirExame(m.props); break;
-    case 'novo-pet': inner = modalNovoPet(m.props); break;
+    case 'novo-pet-wizard': inner = modalNovoPetWizard(m.props); break;
     case 'novo-pet-tutor': inner = modalNovoPetTutor(m.props); break;
     case 'novo-tutor': inner = modalNovoTutor(m.props); break;
     case 'edit-pet': inner = modalEditPet(m.props); break;
@@ -2351,34 +2476,106 @@ function modalConcluirExame(props){
 }
 
 /* ---------- Cadastros ---------- */
-function modalNovoPet(props){
+/* ---------- Assistente "Cadastrar pet" ----------
+   Passo 1: localizar tutor já cadastrado (evita duplicidade) ou criar
+   um novo. Passo 2: dentre os pets já vinculados a esse tutor, escolher
+   um existente ou cadastrar um novo (evita duplicar o mesmo pet).
+   Passo 3: confirmação — inicia o atendimento no prontuário do pet. */
+function modalNovoPetWizard(props){
+  if(!PET_WIZARD) PET_WIZARD = freshPetWizard();
+  const w = PET_WIZARD;
+  const stepLabel = `Passo ${w.step} de 3`;
+  let body = '', foot = '';
+  if(w.step === 1){
+    body = wizardTutorStepHtml(w);
+  } else if(w.step === 2){
+    body = wizardPetStepHtml(w);
+  } else {
+    body = wizardConfirmStepHtml(w);
+  }
   return `
   <div class="modal" data-modal-inner style="max-width:600px;">
-    <div class="modal-head"><h3>Cadastrar pet</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
-    <div class="modal-body">
-      <div class="form-row">
-        <div class="field"><label>Nome</label><input id="np_name" placeholder="Ex: Mel"></div>
-        <div class="field"><label>Espécie</label><select id="np_species"><option>Cachorro</option><option>Gato</option></select></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Raça</label><input id="np_breed" placeholder="Ex: Golden Retriever"></div>
-        <div class="field"><label>Sexo</label><select id="np_sex"><option>Fêmea</option><option>Macho</option></select></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Data de nascimento</label><input type="date" id="np_birth" min="1997-01-01" max="2026-09-01"></div>
-        <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="np_weight" placeholder="Ex: 12.5"></div>
-      </div>
-      <div class="form-row">
-        <div class="field"><label>Microchip</label><input id="np_chip" placeholder="Opcional"></div>
-        <div class="field"><label>Tutor</label><select id="np_tutor">${DB.tutors.map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select></div>
-      </div>
-      <div class="form-row single"><div class="field"><label>Observações</label><textarea id="np_notes" placeholder="Alergias, cuidados especiais..."></textarea></div></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-      <button class="btn btn-primary" data-action="save-novo-pet">${ic('check','icon-sm')}Cadastrar pet</button>
-    </div>
+    <div class="modal-head"><h3>Cadastrar pet <span style="font-size:12.5px;font-weight:400;color:var(--ink-muted);">— ${stepLabel}</span></h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-body">${body}</div>
   </div>`;
+}
+function wizardTutorStepHtml(w){
+  if(w.tutorMode === 'new-tutor'){
+    return `
+      <p class="sub" style="margin-top:0;">Este tutor ainda não tem cadastro. Preencha os dados abaixo.</p>
+      ${w.dupTutor ? tutorDupBannerHtml(w.dupTutor, 'wizard-select-dup-tutor') : ''}
+      ${tutorFormFieldsHtml('nt2', {})}
+      <div style="display:flex;justify-content:space-between;margin-top:8px;">
+        <button class="btn btn-ghost" data-action="wizard-mode-search-tutor">${ic('chevronRight','icon-sm')}Voltar à busca</button>
+        <button class="btn btn-primary" data-action="wizard-save-new-tutor">${ic('check','icon-sm')}Cadastrar tutor</button>
+      </div>`;
+  }
+  return `
+    <p class="sub" style="margin-top:0;">O tutor já possui cadastro? Pesquise por CPF, e-mail ou nome antes de criar um novo, para não duplicar.</p>
+    <div class="form-row single"><div class="field"><label>CPF, e-mail ou nome</label><input id="pw_query" placeholder="Ex: 123.456.789-00" value="${w.query||''}"></div></div>
+    <button class="btn btn-primary" data-action="wizard-search-tutor">${ic('search','icon-sm')}Pesquisar tutor</button>
+    <div style="margin-top:16px;">${w.searched ? tutorSearchResultsHtml(w.results, 'wizard-select-tutor') : ''}</div>
+    <div class="divider"></div>
+    <button class="btn btn-ghost btn-block" data-action="wizard-mode-new-tutor">${ic('plus','icon-sm')}Cadastrar novo tutor</button>
+  `;
+}
+function wizardPetStepHtml(w){
+  const tutor = getTutor(w.tutorId);
+  if(!tutor) return `<div class="empty-state"><h3>Tutor não encontrado</h3></div>`;
+  const header = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;">${tutorAvatarHtml(tutor,36,13)}<div><b>${tutor.name}</b><div style="font-size:12px;color:var(--ink-muted);">Tutor selecionado</div></div></div>
+      <button class="btn btn-ghost btn-sm" data-action="wizard-back-to-tutor">Trocar tutor</button>
+    </div>`;
+  if(w.petMode === 'new-pet'){
+    return `${header}
+      <div class="form-row">
+        <div class="field"><label>Nome</label><input id="wp_name" placeholder="Ex: Mel"></div>
+        <div class="field"><label>Espécie</label><select id="wp_species"><option>Cachorro</option><option>Gato</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Raça</label><input id="wp_breed" placeholder="Ex: Golden Retriever"></div>
+        <div class="field"><label>Sexo</label><select id="wp_sex"><option>Fêmea</option><option>Macho</option></select></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Data de nascimento</label><input type="date" id="wp_birth" min="1997-01-01" max="2026-09-01"></div>
+        <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="wp_weight" placeholder="Ex: 12.5"></div>
+      </div>
+      <div class="form-row single"><div class="field"><label>Microchip</label><input id="wp_chip" placeholder="Opcional"></div></div>
+      <div class="form-row single"><div class="field"><label>Observações</label><textarea id="wp_notes" placeholder="Alergias, cuidados especiais..."></textarea></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;">
+        <button class="btn btn-ghost" data-action="wizard-mode-choose-pet">${ic('chevronRight','icon-sm')}Voltar</button>
+        <button class="btn btn-primary" data-action="wizard-save-new-pet">${ic('check','icon-sm')}Cadastrar pet</button>
+      </div>`;
+  }
+  const pets = petsOfTutor(tutor.id);
+  return `${header}
+    <p class="sub" style="margin-top:0;">Este tutor já possui pets cadastrados?</p>
+    ${pets.length ? pets.map(p=>`
+      <div class="card pad-md" style="margin-bottom:10px;display:flex;align-items:center;gap:12px;">
+        ${petAvatarHtml(p,40,18)}
+        <div style="flex:1;"><b>${p.name}</b><div style="font-size:12.5px;color:var(--ink-muted);">${p.breed} · ${ageFromBirth(p.birth)}</div></div>
+        <button class="btn btn-primary btn-sm" data-action="wizard-select-pet" data-pet-id="${p.id}">Selecionar</button>
+      </div>`).join('') : `<div class="empty-state" style="padding:16px 0;"><p style="margin:0;">Este tutor ainda não tem pets cadastrados.</p></div>`}
+    <div class="divider"></div>
+    <button class="btn btn-ghost btn-block" data-action="wizard-mode-new-pet">${ic('plus','icon-sm')}Cadastrar novo pet</button>
+  `;
+}
+function wizardConfirmStepHtml(w){
+  const pet = getPet(w.petId); const tutor = getTutor(w.tutorId);
+  if(!pet || !tutor) return `<div class="empty-state"><h3>Não foi possível continuar</h3></div>`;
+  return `
+    <div class="card pad-lg" style="text-align:center;">
+      ${petAvatarHtml(pet, 72, 34)}
+      <h3 style="margin:14px 0 2px;">${pet.name}</h3>
+      <div style="color:var(--ink-muted);font-size:14px;margin-bottom:10px;">${pet.breed} · ${ageFromBirth(pet.birth)}</div>
+      <div style="font-size:13.5px;">Tutor: <b>${tutor.name}</b></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;">
+      <button class="btn btn-ghost btn-block" data-action="close-modal">Fechar</button>
+      <button class="btn btn-primary btn-block" data-action="wizard-start-atendimento" data-pet-id="${pet.id}">${ic('check','icon-sm')}Iniciar atendimento</button>
+    </div>
+  `;
 }
 
 function modalNovoPetTutor(props){
@@ -2440,11 +2637,8 @@ function modalNovoTutor(props){
   <div class="modal" data-modal-inner style="max-width:520px;">
     <div class="modal-head"><h3>Cadastrar tutor</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body">
-      <div class="form-row single"><div class="field"><label>Nome completo</label><input id="nt_name" placeholder="Ex: Paola Fontoura"></div></div>
-      <div class="form-row">
-        <div class="field"><label>Telefone</label><input id="nt_phone" placeholder="(11) 90000-0000"></div>
-        <div class="field"><label>E-mail</label><input id="nt_email" placeholder="email@exemplo.com"></div>
-      </div>
+      ${NOVO_TUTOR_DUP ? tutorDupBannerHtml(NOVO_TUTOR_DUP, 'select-dup-tutor') : ''}
+      ${tutorFormFieldsHtml('nt', {})}
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
@@ -3232,6 +3426,7 @@ function doCloseModal(){
   MODAL_DIRTY = false;
   STATE.confirmDiscard = false;
   DRAFT_AT = null; DRAFT_RX = null; DRAFT_PAY = null;
+  NOVO_TUTOR_DUP = null; PET_WIZARD = null;
   closeModal();
 }
 function attemptCloseModal(){
@@ -3360,9 +3555,9 @@ document.addEventListener('click', async function(e){
     case 'open-exame': MODAL_DIRTY=false; openModal('exame', {petId: d.petId}); break;
     case 'open-vacina': MODAL_DIRTY=false; openModal('vacina', {petId: d.petId}); break;
     case 'open-concluir-exame': MODAL_DIRTY=false; openModal('concluir-exame', {examId: d.examId}); break;
-    case 'open-novo-pet': MODAL_DIRTY=false; openModal('novo-pet', {}); break;
+    case 'open-novo-pet': MODAL_DIRTY=false; PET_WIZARD = freshPetWizard(d.tutorId); openModal('novo-pet-wizard', {}); break;
     case 'open-novo-pet-tutor': MODAL_DIRTY=false; openModal('novo-pet-tutor', {}); break;
-    case 'open-novo-tutor': MODAL_DIRTY=false; openModal('novo-tutor', {}); break;
+    case 'open-novo-tutor': MODAL_DIRTY=false; NOVO_TUTOR_DUP = null; openModal('novo-tutor', {}); break;
     case 'open-edit-pet': MODAL_DIRTY=false; openModal('edit-pet', {petId: d.petId}); break;
     case 'open-timeline-detail': openModal('timeline-detail', {type: d.type, id: d.id}); break;
     case 'toggle-notif': openModal('notifications', {}); break;
@@ -3653,22 +3848,79 @@ document.addEventListener('click', async function(e){
       break;
     }
 
-    case 'save-novo-pet': {
+    /* ---------- Assistente "Cadastrar pet" (cadastro único do tutor + do pet) ---------- */
+    case 'wizard-mode-search-tutor': PET_WIZARD.tutorMode = 'search'; PET_WIZARD.dupTutor = null; rerenderModalPreserveScroll(); break;
+    case 'wizard-mode-new-tutor': PET_WIZARD.tutorMode = 'new-tutor'; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-search-tutor': {
+      const q = val('pw_query');
+      PET_WIZARD.query = q;
+      PET_WIZARD.results = searchTutors(q);
+      PET_WIZARD.searched = true;
+      rerenderModalPreserveScroll();
+      break;
+    }
+    case 'wizard-select-tutor': PET_WIZARD.tutorId = d.tutorId; PET_WIZARD.step = 2; PET_WIZARD.petMode = 'choose'; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-select-dup-tutor': PET_WIZARD.tutorId = d.tutorId; PET_WIZARD.dupTutor = null; PET_WIZARD.step = 2; PET_WIZARD.petMode = 'choose'; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-back-to-tutor': PET_WIZARD.step = 1; PET_WIZARD.tutorMode = 'search'; PET_WIZARD.searched = false; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-save-new-tutor': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const cpfDigits = onlyDigits(val('nt2_cpf'));
+      if(cpfDigits && !isValidCPF(cpfDigits)){
+        showToast('CPF inválido — confira os números digitados.', 'warn');
+        SAVE_LOCK = false; break;
+      }
+      const email = val('nt2_email').trim();
+      const dup = (cpfDigits && findTutorByCPF(cpfDigits)) || (email && findTutorByEmail(email));
+      if(dup){
+        PET_WIZARD.dupTutor = dup;
+        SAVE_LOCK = false;
+        rerenderModalPreserveScroll();
+        break;
+      }
+      const id = uid('t');
+      const t = { id, name: val('nt2_name')||'Novo tutor', phone: val('nt2_phone')||'—', email: email||null, cpf: cpfDigits?formatCPF(cpfDigits):null, pets: [] };
+      try{
+        if(remoteReady()) await dbInsertTutor(t);
+        DB.tutors.push(t);
+        PET_WIZARD.tutorId = id; PET_WIZARD.step = 2; PET_WIZARD.tutorMode = 'search'; PET_WIZARD.dupTutor = null;
+        MODAL_DIRTY = false;
+        showToast('Tutor cadastrado com sucesso.');
+        rerenderModalPreserveScroll();
+      } catch(err){
+        if(isDuplicateKeyError(err)) showToast('Tutor já cadastrado no sistema.', 'warn');
+        else reportSaveError(err);
+        SAVE_LOCK = false; break;
+      }
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+    case 'wizard-mode-choose-pet': PET_WIZARD.petMode = 'choose'; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-mode-new-pet': PET_WIZARD.petMode = 'new-pet'; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-select-pet': PET_WIZARD.petId = d.petId; PET_WIZARD.step = 3; MODAL_DIRTY=false; rerenderModalPreserveScroll(); break;
+    case 'wizard-save-new-pet': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const id = uid('p');
-      const species = val('np_species') || 'Cachorro';
-      const p = { id, name: val('np_name')||'Novo pet', species, breed: val('np_breed')||'SRD', sex: val('np_sex')||'Fêmea', birth: val('np_birth')||'2023-01-01', weight: parseFloat(val('np_weight'))||1, microchip: val('np_chip'), notes: val('np_notes'), tutorId: val('np_tutor')||DB.tutors[0].id };
+      const species = val('wp_species') || 'Cachorro';
+      const p = { id, name: val('wp_name')||'Novo pet', species, breed: val('wp_breed')||'SRD', sex: val('wp_sex')||'Fêmea', birth: val('wp_birth')||'2023-01-01', weight: parseFloat(val('wp_weight'))||1, microchip: val('wp_chip'), notes: val('wp_notes'), tutorId: PET_WIZARD.tutorId };
       try{
         if(remoteReady()) await dbInsertPet(p);
         DB.pets.push(p);
         const tt = getTutor(p.tutorId); if(tt && !tt.pets.includes(id)) tt.pets.push(id);
-        doCloseModal();
-        showToast('Pet cadastrado com sucesso.');
-        navigate('vet-pet-detail', {petId: id});
+        PET_WIZARD.petId = id; PET_WIZARD.step = 3; MODAL_DIRTY=false;
+        rerenderModalPreserveScroll();
       } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
+    case 'wizard-start-atendimento': {
+      const petId = PET_WIZARD.petId;
+      doCloseModal();
+      navigate('vet-pet-detail', {petId});
+      DRAFT_AT = freshDraftAt(petId);
+      openModal('atendimento', {petId});
+      break;
+    }
+
     case 'save-novo-pet-tutor': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const id = uid('p');
@@ -3688,16 +3940,40 @@ document.addEventListener('click', async function(e){
     }
     case 'save-novo-tutor': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const cpfDigits = onlyDigits(val('nt_cpf'));
+      if(cpfDigits && !isValidCPF(cpfDigits)){
+        showToast('CPF inválido — confira os números digitados.', 'warn');
+        SAVE_LOCK = false; break;
+      }
+      const email = val('nt_email').trim();
+      const dup = (cpfDigits && findTutorByCPF(cpfDigits)) || (email && findTutorByEmail(email));
+      if(dup){
+        NOVO_TUTOR_DUP = dup;
+        SAVE_LOCK = false;
+        rerenderModalPreserveScroll();
+        break;
+      }
       const id = uid('t');
-      const t = { id, name: val('nt_name')||'Novo tutor', phone: val('nt_phone')||'—', email: val('nt_email')||'—', pets: [] };
+      const t = { id, name: val('nt_name')||'Novo tutor', phone: val('nt_phone')||'—', email: email||null, cpf: cpfDigits?formatCPF(cpfDigits):null, pets: [] };
       try{
         if(remoteReady()) await dbInsertTutor(t);
         DB.tutors.push(t);
         doCloseModal();
         showToast('Tutor cadastrado com sucesso.');
         navigate('vet-tutores');
-      } catch(err){ reportSaveError(err); break; }
+      } catch(err){
+        if(isDuplicateKeyError(err)) showToast('Tutor já cadastrado no sistema.', 'warn');
+        else reportSaveError(err);
+        SAVE_LOCK = false; break;
+      }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+    case 'select-dup-tutor': {
+      const tutorId = d.tutorId;
+      NOVO_TUTOR_DUP = null;
+      doCloseModal();
+      navigate('vet-tutor-detail', {tutorId});
       break;
     }
     case 'save-edit-pet': {
