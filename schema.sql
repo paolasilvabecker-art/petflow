@@ -22,12 +22,18 @@ create table if not exists vets (
 -- ---------- Tutores ----------
 -- user_id fica nulo até o tutor criar login; quando ele se cadastra,
 -- vinculamos pelo e-mail (ver trigger opcional no fim do arquivo).
+-- cpf é opcional (nem todo tutor precisa informar), mas quando informado
+-- precisa ser único — é o identificador principal para evitar tutores
+-- duplicados quando mais de um(a) veterinário(a) cadastra o mesmo tutor.
+-- (Postgres permite múltiplas linhas com cpf NULL numa coluna UNIQUE —
+-- só bloqueia CPFs repetidos de verdade.)
 create table if not exists tutors (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete set null,
   name text not null,
   phone text,
   email text unique,
+  cpf text unique,
   created_at timestamptz default now()
 );
 
@@ -61,9 +67,12 @@ create table if not exists appointments (
 );
 
 -- ---------- Consultas (prontuário) ----------
+-- vet_id identifica quem atendeu — cada consulta pertence a quem a criou;
+-- outros(as) veterinários(as) do mesmo pet não enxergam esta linha (ver RLS).
 create table if not exists consultations (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references pets(id) on delete cascade,
+  vet_id uuid not null references vets(id) on delete cascade,
   date date not null,
   reason text,
   anamnesis text,
@@ -86,6 +95,7 @@ create table if not exists consultations (
 create table if not exists prescriptions (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references pets(id) on delete cascade,
+  vet_id uuid not null references vets(id) on delete cascade,
   date date not null,
   meds jsonb not null default '[]',  -- [{name,dosage,freq,duration,route,orientations}, ...]
   orientations text,
@@ -96,6 +106,7 @@ create table if not exists prescriptions (
 create table if not exists exams (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references pets(id) on delete cascade,
+  vet_id uuid not null references vets(id) on delete cascade,
   date date not null,
   type text not null,
   valor numeric(10,2) default 0,
@@ -112,6 +123,7 @@ create table if not exists exams (
 create table if not exists vaccines (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references pets(id) on delete cascade,
+  vet_id uuid not null references vets(id) on delete cascade,
   vaccine text not null,
   date date not null,
   batch text,
@@ -125,6 +137,7 @@ create table if not exists vaccines (
 create table if not exists payments (
   id uuid primary key default gen_random_uuid(),
   pet_id uuid not null references pets(id) on delete cascade,
+  vet_id uuid not null references vets(id) on delete cascade,
   date date not null,
   service text not null,
   ref_type text,                 -- 'consulta' | 'exame' | 'vacina' | null
@@ -153,9 +166,17 @@ create table if not exists blocked_slots (
 
 -- ============================================================
 -- ROW LEVEL SECURITY
--- Modelo: qualquer usuário autenticado com linha em `vets` é
--- veterinário(a) da clínica e enxerga tudo. Tutores só enxergam
--- (e só podem solicitar agendamento para) os próprios pets.
+-- Modelo (cadastro único do tutor + privacidade por veterinário):
+--   - tutors e pets são COMPARTILHADOS entre todos(as) os(as)
+--     veterinários(as) — qualquer um(a) pode pesquisar/cadastrar/
+--     vincular um tutor ou pet já existente (evita duplicidade).
+--   - consultations, prescriptions, exams, vaccines e payments são
+--     PRIVADOS: cada linha pertence a quem a criou (vet_id) e só
+--     esse(a) veterinário(a) enxerga — mesmo que outro(a) também
+--     atenda o mesmo pet.
+--   - Tutores autenticados enxergam (somente leitura) o histórico
+--     COMPLETO de seus próprios pets, juntando os registros de
+--     todos(as) os(as) veterinários(as) que já os atenderam.
 -- ============================================================
 
 alter table vets enable row level security;
@@ -198,19 +219,20 @@ create policy "vet full access - appointments" on appointments for all using (is
 create policy "tutor reads own appointments" on appointments for select using (owns_pet(pet_id));
 create policy "tutor creates own appointments" on appointments for insert with check (owns_pet(pet_id));
 
-create policy "vet full access - consultations" on consultations for all using (is_vet()) with check (is_vet());
+-- Privado por veterinário(a): só quem criou o registro tem acesso a ele.
+create policy "vet owns - consultations" on consultations for all using (vet_id = auth.uid()) with check (vet_id = auth.uid());
 create policy "tutor reads own consultations" on consultations for select using (owns_pet(pet_id));
 
-create policy "vet full access - prescriptions" on prescriptions for all using (is_vet()) with check (is_vet());
+create policy "vet owns - prescriptions" on prescriptions for all using (vet_id = auth.uid()) with check (vet_id = auth.uid());
 create policy "tutor reads own prescriptions" on prescriptions for select using (owns_pet(pet_id));
 
-create policy "vet full access - exams" on exams for all using (is_vet()) with check (is_vet());
+create policy "vet owns - exams" on exams for all using (vet_id = auth.uid()) with check (vet_id = auth.uid());
 create policy "tutor reads own exams" on exams for select using (owns_pet(pet_id));
 
-create policy "vet full access - vaccines" on vaccines for all using (is_vet()) with check (is_vet());
+create policy "vet owns - vaccines" on vaccines for all using (vet_id = auth.uid()) with check (vet_id = auth.uid());
 create policy "tutor reads own vaccines" on vaccines for select using (owns_pet(pet_id));
 
-create policy "vet full access - payments" on payments for all using (is_vet()) with check (is_vet());
+create policy "vet owns - payments" on payments for all using (vet_id = auth.uid()) with check (vet_id = auth.uid());
 create policy "tutor reads own payments" on payments for select using (owns_pet(pet_id));
 
 create policy "vet full access - closed_dates" on closed_dates for all using (is_vet()) with check (is_vet());
