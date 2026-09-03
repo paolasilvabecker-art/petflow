@@ -210,6 +210,31 @@ async function handlePhotoUpload(kind, id, file){
   }
 }
 
+/* Laudo/anexo do exame: mesmo mecanismo das fotos (bucket "photos" do
+   Supabase Storage, pasta "exams/"), mas guardado na coluna `anexo` de
+   `exams`. Antes isso era só uma caixa decorativa — nenhum arquivo era
+   realmente enviado. */
+async function handleExamAttachmentUpload(examId, file){
+  if(!SUPABASE_CONFIGURED || !supa){ showToast('Conecte o Supabase para anexar arquivos.', 'warn'); return; }
+  try{
+    showToast('Enviando arquivo...');
+    const ext = (file.name.split('.').pop()||'pdf').toLowerCase();
+    const path = `exams/${examId}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supa.storage.from('photos').upload(path, file, { upsert:true, contentType: file.type||'application/octet-stream' });
+    if(upErr) throw upErr;
+    const { data: pub } = supa.storage.from('photos').getPublicUrl(path);
+    const url = pub.publicUrl;
+    await dbUpdateExam(examId, { anexo: url });
+    const ex = DB.exams.find(x=>x.id===examId); if(ex) ex.anexo = url;
+    MODAL_DIRTY = false;
+    showToast('Arquivo anexado!');
+    render();
+  } catch(err){
+    showToast('Não foi possível anexar o arquivo: ' + (err.message||''), 'warn');
+    render();
+  }
+}
+
 /* Cadastro de veterinário(a): cria a conta e a linha em `vets`.
    Ativado só se o Bloco 4 do auth-setup.sql foi rodado — sem aquela
    política, o insert abaixo falha com erro de permissão. */
