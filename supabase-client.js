@@ -85,7 +85,7 @@ async function dbDeletePet(petId){
 }
 async function dbInsertTutor(tutor){
   requireSupa();
-  const { error } = await supa.from('tutors').insert({ id: tutor.id, name: tutor.name, phone: tutor.phone||'', email: tutor.email, photo_url: tutor.photo||null });
+  const { error } = await supa.from('tutors').insert({ id: tutor.id, name: tutor.name, phone: tutor.phone||'', email: tutor.email||null, cpf: tutor.cpf||null, photo_url: tutor.photo||null });
   if(error) throw error;
 }
 async function dbUpdateTutor(tutorId, fields){
@@ -97,10 +97,16 @@ async function dbUpdateTutor(tutorId, fields){
   const { error } = await supa.from('tutors').update(payload).eq('id', tutorId);
   if(error) throw error;
 }
+/* vet_id: todo registro clínico/financeiro criado pela veterinária logada
+   passa a pertencer a ela (ver RLS em schema.sql) — é o que garante que
+   outro(a) veterinário(a) que também atenda o mesmo pet não veja este
+   registro. DB.vet.id é preenchido em enterAppWithProfile() no login. */
+function currentVetId(){ return DB.vet && DB.vet.id ? DB.vet.id : null; }
+
 async function dbInsertConsultation(c){
   requireSupa();
   const { error } = await supa.from('consultations').insert({
-    id:c.id, pet_id:c.petId, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:c.weight,
+    id:c.id, pet_id:c.petId, vet_id: currentVetId(), date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:c.weight,
     temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos,
     diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:c.valor||0,
   });
@@ -108,7 +114,7 @@ async function dbInsertConsultation(c){
 }
 async function dbInsertExam(e){
   requireSupa();
-  const { error } = await supa.from('exams').insert({ id:e.id, pet_id:e.petId, date:e.date, type:e.type, valor:e.valor||0, description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status });
+  const { error } = await supa.from('exams').insert({ id:e.id, pet_id:e.petId, vet_id: currentVetId(), date:e.date, type:e.type, valor:e.valor||0, description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status });
   if(error) throw error;
 }
 async function dbUpdateExam(examId, fields){
@@ -118,17 +124,17 @@ async function dbUpdateExam(examId, fields){
 }
 async function dbInsertVaccine(v){
   requireSupa();
-  const { error } = await supa.from('vaccines').insert({ id:v.id, pet_id:v.petId, vaccine:v.vaccine, date:v.date, batch:v.batch||'', next_date:v.nextDate, valor:v.valor||0, notes:v.notes||'' });
+  const { error } = await supa.from('vaccines').insert({ id:v.id, pet_id:v.petId, vet_id: currentVetId(), vaccine:v.vaccine, date:v.date, batch:v.batch||'', next_date:v.nextDate, valor:v.valor||0, notes:v.notes||'' });
   if(error) throw error;
 }
 async function dbInsertPrescription(r){
   requireSupa();
-  const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, date:r.date, meds:r.meds, orientations:r.orientations||'' });
+  const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, vet_id: currentVetId(), date:r.date, meds:r.meds, orientations:r.orientations||'' });
   if(error) throw error;
 }
 async function dbInsertPayment(p){
   requireSupa();
-  const { error } = await supa.from('payments').insert({ id:p.id, pet_id:p.petId, date:p.date, service:p.service, ref_type:p.refType, ref_id:p.refId, valor:p.valor, status:p.status });
+  const { error } = await supa.from('payments').insert({ id:p.id, pet_id:p.petId, vet_id: currentVetId(), date:p.date, service:p.service, ref_type:p.refType, ref_id:p.refId, valor:p.valor, status:p.status });
   if(error) throw error;
 }
 async function dbUpdatePaymentsStatus(payIds, forma, parcelas, paidDate){
@@ -252,14 +258,16 @@ async function loadAllFromSupabase(){
   [vets, tutors, pets, appointments, consultations, prescriptions, exams, vaccines, payments, closedDates, blockedSlots]
     .forEach(r=>{ if(r.error) console.error('[PetFlow] Erro ao carregar do Supabase:', r.error); });
 
-  DB.tutors = (tutors.data||[]).map(t=>({ id:t.id, name:t.name, phone:t.phone, email:t.email, photo:t.photo_url||null, pets: (pets.data||[]).filter(p=>p.tutor_id===t.id).map(p=>p.id) }));
+  DB.tutors = (tutors.data||[]).map(t=>({ id:t.id, name:t.name, phone:t.phone, email:t.email, cpf:t.cpf||null, photo:t.photo_url||null, pets: (pets.data||[]).filter(p=>p.tutor_id===t.id).map(p=>p.id) }));
   DB.pets = (pets.data||[]).map(p=>({ id:p.id, name:p.name, species:p.species, breed:p.breed, sex:p.sex, birth:p.birth, weight:Number(p.weight), microchip:p.microchip, notes:p.notes||'', tutorId:p.tutor_id, photo:p.photo_url||null }));
   DB.appointments = (appointments.data||[]).map(a=>({ id:a.id, petId:a.pet_id, date:a.date, time:a.time.slice(0,5), type:a.type, modality:a.modality, status:a.status, proposedSlots:a.proposed_slots }));
-  DB.consultations = (consultations.data||[]).map(c=>({ id:c.id, petId:c.pet_id, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:Number(c.weight), temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos, diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:Number(c.valor||0) }));
-  DB.prescriptions = (prescriptions.data||[]).map(r=>({ id:r.id, petId:r.pet_id, date:r.date, meds:r.meds||[], orientations:r.orientations||'' }));
-  DB.exams = (exams.data||[]).map(e=>({ id:e.id, petId:e.pet_id, date:e.date, type:e.type, valor:Number(e.valor||0), description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status }));
-  DB.vaccines = (vaccines.data||[]).map(v=>({ id:v.id, petId:v.pet_id, vaccine:v.vaccine, date:v.date, batch:v.batch, nextDate:v.next_date, valor:Number(v.valor||0), notes:v.notes||'' }));
-  DB.payments = (payments.data||[]).map(p=>({ id:p.id, petId:p.pet_id, date:p.date, service:p.service, refType:p.ref_type, refId:p.ref_id, valor:Number(p.valor), status:p.status, formaPagamento:p.forma_pagamento, parcelamentoTutor:p.parcelamento_tutor, paidDate:p.paid_date }));
+  // As tabelas abaixo já chegam filtradas pelo RLS: cada veterinário(a)
+  // só recebe do banco os registros que ela mesma criou (vet_id = auth.uid()).
+  DB.consultations = (consultations.data||[]).map(c=>({ id:c.id, petId:c.pet_id, vetId:c.vet_id, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:Number(c.weight), temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos, diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:Number(c.valor||0) }));
+  DB.prescriptions = (prescriptions.data||[]).map(r=>({ id:r.id, petId:r.pet_id, vetId:r.vet_id, date:r.date, meds:r.meds||[], orientations:r.orientations||'' }));
+  DB.exams = (exams.data||[]).map(e=>({ id:e.id, petId:e.pet_id, vetId:e.vet_id, date:e.date, type:e.type, valor:Number(e.valor||0), description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status }));
+  DB.vaccines = (vaccines.data||[]).map(v=>({ id:v.id, petId:v.pet_id, vetId:v.vet_id, vaccine:v.vaccine, date:v.date, batch:v.batch, nextDate:v.next_date, valor:Number(v.valor||0), notes:v.notes||'' }));
+  DB.payments = (payments.data||[]).map(p=>({ id:p.id, petId:p.pet_id, vetId:p.vet_id, date:p.date, service:p.service, refType:p.ref_type, refId:p.ref_id, valor:Number(p.valor), status:p.status, formaPagamento:p.forma_pagamento, parcelamentoTutor:p.parcelamento_tutor, paidDate:p.paid_date }));
   DB.closedDates = (closedDates.data||[]).map(c=>({ id:c.id, date:c.date, reason:c.reason||'' }));
   DB.blockedSlots = (blockedSlots.data||[]).map(b=>({ id:b.id, date:b.date, time:b.time.slice(0,5) }));
 
@@ -267,7 +275,7 @@ async function loadAllFromSupabase(){
   // exibido na tela é a linha do usuário logado (ver enterAppWithProfile).
   if(vets.data && vets.data.length && !DB.__vetLocked){
     const v = vets.data[0];
-    DB.vet = { name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
+    DB.vet = { id:v.id, name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
   }
 }
 
@@ -276,7 +284,7 @@ async function enterAppWithProfile(profile){
   await loadAllFromSupabase();
   if(profile.role === 'vet'){
     const v = profile.vetRow;
-    DB.vet = { name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
+    DB.vet = { id:v.id, name:v.name, firstName:(v.name.split(' ')[1]||v.name), crmv:v.crmv, clinic:v.clinic, specialty:v.specialty, email:v.email, phone:v.phone };
     DB.__vetLocked = true; // impede loadAllFromSupabase de sobrescrever com outro(a) vet
     STATE.role = 'vet';
     STATE.view = 'vet-dashboard';
