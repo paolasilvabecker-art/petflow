@@ -460,7 +460,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .tutor-top h1{font-size:22px;margin:14px 0 4px;font-weight:600;position:relative;z-index:1;}
 .tutor-top p{margin:0;color:#D9E7DF;font-size:14px;position:relative;z-index:1;}
 .tutor-body{padding:20px 18px 10px;}
-.tutor-topbtn{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.14);display:flex;align-items:center;justify-content:center;color:#fff;}
+.tutor-topbtn{position:relative;width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.14);display:flex;align-items:center;justify-content:center;color:#fff;}
+.bell-dot-tutor{position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--accent);border:1.5px solid var(--primary);}
 
 .pet-chip{
   display:flex;align-items:center;gap:12px;
@@ -620,12 +621,38 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .doc-row:first-child{border-top:none;}
 .doc-ic{width:42px;height:42px;border-radius:12px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 
-@media print{ body *{visibility:hidden;} }
+#print-area{display:none;}
+@media print{
+  body *{visibility:hidden;}
+  #print-area, #print-area *{visibility:visible;}
+  #print-area{display:block;position:absolute;left:0;top:0;width:100%;padding:0;margin:0;}
+}
+.rx-print-page{font-family:'Plus Jakarta Sans', sans-serif;color:#152420;padding:28px 34px;max-width:760px;margin:0 auto;}
+.rx-print-page .rxp-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1F5C4D;padding-bottom:14px;margin-bottom:20px;}
+.rx-print-page .rxp-head h1{font-family:'Fraunces',serif;font-size:20px;margin:0 0 4px;color:#1F5C4D;}
+.rx-print-page .rxp-head .rxp-vet-meta{font-size:12.5px;color:#66756C;line-height:1.5;}
+.rx-print-page .rxp-head .rxp-date{font-size:12.5px;color:#66756C;text-align:right;white-space:nowrap;}
+.rx-print-page .rxp-patient{font-size:13px;color:#66756C;margin-bottom:22px;}
+.rx-print-page .rxp-patient b{color:#152420;}
+.rx-print-page .rxp-med{padding:14px 0;border-top:1px solid #E4E8E1;page-break-inside:avoid;}
+.rx-print-page .rxp-med:first-of-type{border-top:none;}
+.rx-print-page .rxp-med .rxp-med-title{font-size:15px;font-weight:700;margin-bottom:4px;}
+.rx-print-page .rxp-med .rxp-med-line{font-size:13px;color:#66756C;margin-bottom:4px;}
+.rx-print-page .rxp-med .rxp-med-posologia{font-size:13.5px;margin-top:6px;white-space:pre-wrap;}
+.rx-print-page .rxp-med .rxp-med-orient{font-size:12.5px;color:#66756C;margin-top:4px;white-space:pre-wrap;}
+.rx-print-page .rxp-block{margin-top:18px;padding-top:14px;border-top:1px solid #E4E8E1;font-size:13.5px;white-space:pre-wrap;page-break-inside:avoid;}
+.rx-print-page .rxp-block b{display:block;margin-bottom:4px;}
+.rx-print-page .rxp-sign{margin-top:56px;text-align:center;}
+.rx-print-page .rxp-sign .line{border-top:1px solid #152420;width:280px;margin:0 auto 6px;}
+.rx-print-page .rxp-sign .name{font-size:13px;font-weight:700;}
+.rx-print-page .rxp-sign .crmv{font-size:12px;color:#66756C;}
+@media print{ .rx-print-page{padding:0;} }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div class="toast-wrap" id="toastWrap"></div>
+<div id="print-area"></div>
 <script>
 /* ============================================================
    PETFLOW — protótipo funcional
@@ -698,6 +725,11 @@ function fmtDateShort(iso){
 function fmtDateFull(iso){
   const d = new Date(iso+'T00:00:00');
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+}
+function fmtDateLongPt(iso){
+  const meses = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const d = new Date(iso+'T00:00:00');
+  return `${d.getDate()} de ${meses[d.getMonth()]}`;
 }
 function fmtMoney(v){
   return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -900,9 +932,28 @@ function payStatusBadge(status){
 }
 const PAYMENT_METHODS = ['PIX','Cartão de crédito','Cartão de débito','Dinheiro'];
 
+/* ---------- Data/hora atual (fuso de Brasília, sempre em tempo real) ----------
+   Antes a data "de hoje" ficava fixa em '2026-09-01' (data em que o protótipo
+   foi criado). Agora ela é calculada a partir do relógio real do dispositivo,
+   sempre no fuso America/Sao_Paulo (UTC-3), então passa a acompanhar o dia
+   atual automaticamente — sem precisar mexer no código de novo. Datas já
+   salvas em consultas/exames/vacinas/etc. não são afetadas por isto: elas
+   continuam vindo do banco, intactas. */
+function saoPauloParts(){
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false,
+  });
+  const parts = {};
+  fmt.formatToParts(new Date()).forEach(p=>{ if(p.type!=='literal') parts[p.type]=p.value; });
+  return parts;
+}
+function todayISO(){ const p = saoPauloParts(); return `${p.year}-${p.month}-${p.day}`; }
+function nowMinutesSaoPaulo(){ const p = saoPauloParts(); const h = parseInt(p.hour,10)%24; return h*60 + parseInt(p.minute,10); }
+
 /* ---------- Calendário: constantes e utilidades de tempo ---------- */
-const NOW_ISO_DATE = '2026-09-01';
-const NOW_TIME_MIN = 10*60 + 15; // 10:15 — "agora" fixo para a demonstração
+const NOW_ISO_DATE = todayISO();          // data de hoje, calculada em tempo real
+const NOW_TIME_MIN = nowMinutesSaoPaulo(); // hora atual (minutos desde 00:00), calculada em tempo real
 const CAL_DAY_START = 8;  // 08:00
 const CAL_DAY_END = 19;   // 19:00
 const CAL_SLOT_MIN = 30;  // granularidade de 30 minutos
@@ -910,6 +961,7 @@ function timeToMin(t){ const [h,m] = t.split(':').map(Number); return h*60+m; }
 function minToTime(m){ const h = Math.floor(m/60), mm = m%60; return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`; }
 function calSlotList(){ const out=[]; for(let m=CAL_DAY_START*60; m<CAL_DAY_END*60; m+=CAL_SLOT_MIN) out.push(minToTime(m)); return out; }
 function isoAddDays(iso, n){ const d = new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function isoAddYears(iso, n){ const d = new Date(iso+'T00:00:00'); d.setFullYear(d.getFullYear()+n); return d.toISOString().slice(0,10); }
 function weekStart(iso){ const d = new Date(iso+'T00:00:00'); const day = d.getDay(); const diff = day===0 ? -6 : 1-day; d.setDate(d.getDate()+diff); return d.toISOString().slice(0,10); }
 function weekdayAbbr(iso){ const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']; return dias[new Date(iso+'T00:00:00').getDay()]; }
 function monthLabel(iso){ const meses=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']; const d=new Date(iso+'T00:00:00'); return `${meses[d.getMonth()]} de ${d.getFullYear()}`;}
@@ -1058,6 +1110,52 @@ function petsNeedingAttention(){
   return out.slice(0,4);
 }
 
+/* ---------- Notificações (sino) ----------
+   Antes DB.notifications era um array estático que nunca era preenchido —
+   por isso nenhuma notificação (nem a de vacina a vencer) aparecia. Agora a
+   lista é CALCULADA em tempo real, toda vez que o sino é aberto, a partir
+   dos próprios dados já cadastrados (vacinas, agendamentos) e da data atual
+   (NOW_ISO_DATE/daysUntil, sempre "hoje" de verdade). Como nada fica salvo
+   em uma lista separada, não existe risco de notificação duplicada — o item
+   simplesmente some da lista quando deixa de ser verdade (vacina aplicada,
+   agendamento confirmado etc.). */
+function vaccineReminderItems(pets){
+  const out = [];
+  pets.forEach(p=>{
+    DB.vaccines.filter(v=>v.petId===p.id && v.nextDate).forEach(v=>{
+      const d = daysUntil(v.nextDate);
+      if(d < 0){
+        out.push({ petId:p.id, kind:'danger', text:`${p.name}: a dose de reforço de ${v.vaccine} está atrasada (venceu em ${fmtDateFull(v.nextDate)}).`, time: fmtDateFull(v.nextDate), sortDate:v.nextDate });
+      } else if(d <= 14){
+        out.push({ petId:p.id, kind:'warn', text:`${p.name}: reforço da vacina ${v.vaccine} previsto para ${fmtDateFull(v.nextDate)}${d===0?' (hoje)':d===1?' (amanhã)':` (em ${d} dias)`}.`, time: fmtDateFull(v.nextDate), sortDate:v.nextDate });
+      }
+    });
+  });
+  return out;
+}
+function tutorBellBtn(){
+  const unread = getNotificationItems().length;
+  return `<button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}${unread>0?'<span class="bell-dot-tutor"></span>':''}</button>`;
+}
+function getNotificationItems(){
+  const out = [];
+  if(STATE.role === 'tutor'){
+    const t = getTutor(STATE.currentTutorId);
+    const pets = t ? DB.pets.filter(p=>p.tutorId===t.id) : [];
+    out.push(...vaccineReminderItems(pets));
+    DB.appointments.filter(a=>pets.some(p=>p.id===a.petId) && a.status==='Confirmado' && a.date>=NOW_ISO_DATE).forEach(a=>{
+      out.push({ petId:a.petId, kind:'success', text:`${getPet(a.petId).name}: ${a.type} confirmado(a) para ${fmtDateFull(a.date)} às ${a.time}.`, time: fmtDateFull(a.date), sortDate:a.date });
+    });
+  } else {
+    out.push(...vaccineReminderItems(DB.pets));
+    DB.appointments.filter(a=>a.status==='Aguardando confirmação').forEach(a=>{
+      out.push({ petId:a.petId, kind:'warn', text:`${getPet(a.petId).name}: ${a.type} aguardando confirmação.`, time: fmtDateFull(a.date), sortDate:a.date });
+    });
+  }
+  out.sort((a,b)=>a.sortDate.localeCompare(b.sortDate));
+  return out;
+}
+
 /* ---------- Peso: histórico derivado das consultas (sem duplicar dados) ---------- */
 function petWeightHistory(petId){
   return DB.consultations.filter(c=>c.petId===petId && c.weight)
@@ -1181,9 +1279,10 @@ const STATE = {
   modal: null,          // { type, props }
   petFilter: 'Todos',   // filtro da timeline
   financeFilter: 'Todos',
-  agenda: { view: 'semana', anchorDate: '2026-09-01' },
+  agenda: { view: 'semana', anchorDate: NOW_ISO_DATE },
   confirmDiscard: false,
   confirmDeletePetId: null,
+  confirmDeleteConsultationId: null,
   booking: { step:1, petId:null, service:null, modality:null, date:null, time:null }, // wizard tutor
   currentTutorId: 't1', // usado no modo demonstração; login real sobrescreve isso
   loginTab: 'vet',       // aba ativa na tela de login real: 'vet' | 'tutor'
@@ -1226,6 +1325,9 @@ function render(){
   if(STATE.confirmDeletePetId){
     app.insertAdjacentHTML('beforeend', renderConfirmDeletePet());
   }
+  if(STATE.confirmDeleteConsultationId){
+    app.insertAdjacentHTML('beforeend', renderConfirmDeleteConsultation());
+  }
   bindGlobalEvents();
 }
 
@@ -1264,6 +1366,28 @@ function renderConfirmDeletePet(){
       <div class="modal-foot" style="justify-content:center;">
         <button class="btn btn-ghost" data-action="cancel-delete-pet">Cancelar</button>
         <button class="btn btn-danger-ghost" style="background:var(--danger);color:#fff;" data-action="confirm-delete-pet" data-pet-id="${p.id}">${ic('trash','icon-sm')}Excluir permanentemente</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderConfirmDeleteConsultation(){
+  const c = DB.consultations.find(x=>x.id===STATE.confirmDeleteConsultationId);
+  if(!c) return '';
+  const pet = getPet(c.petId);
+  return `
+  <div class="modal-overlay" style="z-index:300;">
+    <div class="modal" data-modal-inner style="max-width:440px;">
+      <div class="modal-body" style="text-align:center;padding-top:32px;">
+        <div class="empty-state" style="border:none;padding:0;">
+          <div class="eic" style="background:var(--danger-soft);color:var(--danger);">${ic('trash','icon-lg')}</div>
+          <h3>Excluir este atendimento?</h3>
+          <p>Tem certeza que deseja excluir o atendimento de ${pet?pet.name:''} de ${fmtDateFull(c.date)}? Essa ação não poderá ser desfeita. Exames, vacinas e receitas lançados separadamente não são afetados.</p>
+        </div>
+      </div>
+      <div class="modal-foot" style="justify-content:center;">
+        <button class="btn btn-ghost" data-action="cancel-delete-consultation">Cancelar</button>
+        <button class="btn btn-danger-ghost" style="background:var(--danger);color:#fff;" data-action="confirm-delete-consultation" data-consultation-id="${c.id}">${ic('trash','icon-sm')}Excluir permanentemente</button>
       </div>
     </div>
   </div>`;
@@ -1409,7 +1533,7 @@ function renderVetShell(){
 }
 
 function renderVetTopbar(){
-  const unread = DB.notifications.filter(n=>!n.read).length;
+  const unread = getNotificationItems().length;
   return `
   <div class="topbar">
     <div class="search">${ic('search','icon-sm')}<input placeholder="Buscar pet, tutor ou atendimento..." /></div>
@@ -1442,7 +1566,7 @@ function renderVetContent(){
 
 /* ---------- Dashboard ---------- */
 function renderVetDashboard(){
-  const today = '2026-09-01';
+  const today = NOW_ISO_DATE;
   const todays = DB.appointments.filter(a=>a.date===today).sort((a,b)=>a.time.localeCompare(b.time));
   const receitaPrevista = todays.reduce((s,a)=>{
     const c = DB.consultations.find(c=>c.petId===a.petId && c.date===today);
@@ -1455,7 +1579,7 @@ function renderVetDashboard(){
     <div class="page-head">
       <div>
         <h1>Bom dia, ${DB.vet.name.split(' ')[0]==='Dra.'?DB.vet.name.split(' ')[1]:DB.vet.firstName} 👋</h1>
-        <p class="sub">Veja o que está acontecendo hoje, 1 de setembro.</p>
+        <p class="sub">Veja o que está acontecendo hoje, ${fmtDateLongPt(today)}.</p>
       </div>
       <button class="btn btn-primary" data-action="open-atendimento">${ic('plus','icon-sm')}Novo atendimento</button>
     </div>
@@ -1741,7 +1865,7 @@ function renderPetGridOnly(){
 function renderPetCard(p){
   const tutor = getTutor(p.tutorId);
   const lc = lastConsultation(p.id);
-  const nextAppt = DB.appointments.filter(a=>a.petId===p.id && a.date>='2026-09-01').sort((a,b)=>a.date.localeCompare(b.date))[0];
+  const nextAppt = DB.appointments.filter(a=>a.petId===p.id && a.date>=NOW_ISO_DATE).sort((a,b)=>a.date.localeCompare(b.date))[0];
   return `
   <div class="card pet-card" data-action="nav" data-view="vet-pet-detail" data-pet-id="${p.id}">
     <div class="head">
@@ -1767,20 +1891,24 @@ function renderVetTutores(){
       ${DB.tutors.map(t=>{
         const pets = petsOfTutor(t.id);
         const lastAppts = pets.flatMap(p=>DB.consultations.filter(c=>c.petId===p.id)).sort((a,b)=>new Date(b.date)-new Date(a.date));
-        const pendente = tutorPendingTotal(t.id);
+        // A dívida é sempre exibida por pet (nunca como um valor genérico do
+        // tutor) — se mais de um pet do mesmo tutor tiver pendência, cada um
+        // aparece com seu próprio valor.
+        const finance = tutorFinance(t.id);
+        const owingPets = finance.groups.filter(g=>g.pendingTotal>0);
         return `
         <div class="reg-row" style="padding:16px 4px;">
           <span style="cursor:pointer;" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">${tutorAvatarHtml(t, 40, 14)}</span>
           <div style="flex:1;cursor:pointer;" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">
             <b style="font-size:14.5px;">${t.name}</b>
             <div style="font-size:12.5px;color:var(--ink-muted);margin-top:2px;">${pets.map(p=>SPECIES_EMOJI[p.species]).join(' ')} ${pets.length} pet(s) · último atendimento ${lastAppts[0]?fmtDateShort(lastAppts[0].date):'—'}</div>
-            <div style="margin-top:6px;">
-              ${pendente>0 ? `<span class="badge badge-danger"><span class="badge-dot"></span>${fmtMoney(pendente)} pendente</span>` : `<span class="badge badge-success"><span class="badge-dot"></span>Tudo pago</span>`}
+            <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+              ${owingPets.length ? owingPets.map(g=>`<span class="badge badge-danger"><span class="badge-dot"></span>${g.pet.name}: ${fmtMoney(g.pendingTotal)} pendente</span>`).join('') : `<span class="badge badge-success"><span class="badge-dot"></span>Tudo pago</span>`}
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
             <button class="btn btn-ghost btn-sm" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${t.id}">Ver detalhes</button>
-            ${pendente>0 ? `<button class="btn btn-primary btn-sm" data-action="open-pagar-tutor" data-tutor-id="${t.id}">Pagar total</button>` : ''}
+            ${finance.pendingTotal>0 ? `<button class="btn btn-primary btn-sm" data-action="open-pagar-tutor" data-tutor-id="${t.id}">Pagar total</button>` : ''}
           </div>
         </div>`;
       }).join('')}
@@ -2032,7 +2160,12 @@ function renderVetFinanceiro(){
   let list = finance.list;
   if(filter!=='Todos') list = list.filter(p=>p.status===filter);
 
-  const devedores = DB.tutors.map(t=>({tutor:t, pendente: tutorPendingTotal(t.id)})).filter(x=>x.pendente>0).sort((a,b)=>b.pendente-a.pendente);
+  // Cada devedor traz também a lista dos pets responsáveis pela dívida
+  // (um tutor com vários pets pode ter só um deles com pendência).
+  const devedores = DB.tutors.map(t=>{
+    const finance = tutorFinance(t.id);
+    return { tutor:t, pendente: finance.pendingTotal, owingPets: finance.groups.filter(g=>g.pendingTotal>0) };
+  }).filter(x=>x.pendente>0).sort((a,b)=>b.pendente-a.pendente);
 
   return `
     <div class="page-head">
@@ -2051,7 +2184,10 @@ function renderVetFinanceiro(){
       ${devedores.map(x=>`
         <div class="reg-row">
           <span class="reg-ic" style="background:var(--danger-soft);color:var(--danger);">${ic('wallet','icon-sm')}</span>
-          <div style="flex:1;"><b style="font-size:13.5px;">${x.tutor.name}</b><div style="font-size:12px;color:var(--ink-muted);">${petsOfTutor(x.tutor.id).length} pet(s)</div></div>
+          <div style="flex:1;">
+            <b style="font-size:13.5px;">${x.tutor.name}</b>
+            <div style="font-size:12px;color:var(--ink-muted);margin-top:2px;">${x.owingPets.map(g=>`${g.pet.name} (${fmtMoney(g.pendingTotal)})`).join(' · ')}</div>
+          </div>
           <b style="color:var(--danger);margin-right:6px;">${fmtMoney(x.pendente)}</b>
           <button class="btn btn-ghost btn-sm" data-action="nav" data-view="vet-tutor-detail" data-tutor-id="${x.tutor.id}">Ver detalhes</button>
           <button class="btn btn-primary btn-sm" data-action="open-pagar-tutor" data-tutor-id="${x.tutor.id}">Pagar total</button>
@@ -2192,12 +2328,21 @@ function freshPetWizard(tutorId){
 }
 
 function freshDraftAt(petId){
-  return { petId: petId || DB.pets[0].id, date:'2026-09-01', modality:'Clínica', reason:'', anamnesis:'',
+  return { editId:null, petId: petId || DB.pets[0].id, date:NOW_ISO_DATE, modality:'Clínica', reason:'', anamnesis:'', examFisico:'',
     weight:'', temp:'', hr:'', rr:'', tpc:'', hidratacao:'', mucosas:'', linfonodos:'',
     diagnosis:'', conduct:'', valor:'', exams:[], vaccines:[] };
 }
+/* Carrega uma consulta já existente no rascunho de atendimento, para edição.
+   Exames/vacinas já lançados nessa consulta continuam como registros
+   independentes (não têm vínculo de "consulta_id" no banco) — editar aqui
+   não mexe neles; só os campos da própria consulta. */
+function draftAtFromConsultation(c){
+  return { editId:c.id, petId:c.petId, date:c.date, modality:'Clínica', reason:c.reason||'', anamnesis:c.anamnesis||'', examFisico:c.examFisico||'',
+    weight:c.weight||'', temp:c.temp||'', hr:c.hr||'', rr:c.rr||'', tpc:c.tpc||'', hidratacao:c.hidratacao||'', mucosas:c.mucosas||'', linfonodos:c.linfonodos||'',
+    diagnosis:c.diagnosis||'', conduct:c.conduct||'', valor:c.valor||'', exams:[], vaccines:[] };
+}
 function freshDraftRx(petId){
-  return { petId: petId || DB.pets[0].id, date:'2026-09-01', meds:[{name:'',dosage:'',freq:'',duration:'',route:'Oral',orientations:''}] };
+  return { petId: petId || DB.pets[0].id, date:NOW_ISO_DATE, meds:[{name:'',dosage:'',qty:'',freq:'',duration:'',route:'Oral',posologia:'',orientations:''}], observacoes:'', orientations:'' };
 }
 
 function syncAtDraftFromDOM(){
@@ -2207,6 +2352,7 @@ function syncAtDraftFromDOM(){
   DRAFT_AT.modality = val('at_modality');
   DRAFT_AT.reason = val('at_reason');
   DRAFT_AT.anamnesis = val('at_anamnesis');
+  DRAFT_AT.examFisico = val('at_exam_fisico');
   DRAFT_AT.weight = val('at_weight');
   DRAFT_AT.temp = val('at_temp');
   DRAFT_AT.hr = val('at_hr');
@@ -2225,9 +2371,11 @@ function syncRxDraftFromDOM(){
   if(!DRAFT_RX) return;
   DRAFT_RX.petId = val('rx_pet') || DRAFT_RX.petId;
   DRAFT_RX.date = val('rx_date');
+  DRAFT_RX.observacoes = val('rx_observacoes');
+  DRAFT_RX.orientations = val('rx_orientations');
   DRAFT_RX.meds.forEach((m,i)=>{
-    m.name = val(`rxmed_${i}_name`); m.dosage = val(`rxmed_${i}_dosage`); m.freq = val(`rxmed_${i}_freq`);
-    m.duration = val(`rxmed_${i}_duration`); m.route = val(`rxmed_${i}_route`); m.orientations = val(`rxmed_${i}_orient`);
+    m.name = val(`rxmed_${i}_name`); m.dosage = val(`rxmed_${i}_dosage`); m.qty = val(`rxmed_${i}_qty`); m.freq = val(`rxmed_${i}_freq`);
+    m.duration = val(`rxmed_${i}_duration`); m.route = val(`rxmed_${i}_route`); m.posologia = val(`rxmed_${i}_posologia`); m.orientations = val(`rxmed_${i}_orient`);
   });
 }
 
@@ -2262,7 +2410,7 @@ function modalAtendimento(props){
   const d = DRAFT_AT;
   return `
   <div class="modal" data-modal-inner style="max-width:700px;">
-    <div class="modal-head"><h3>Novo atendimento</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-head"><h3>${d.editId ? 'Editar atendimento' : 'Novo atendimento'}</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body">
       <div class="form-section">
         <div class="fs-title">Identificação</div>
@@ -2303,6 +2451,11 @@ function modalAtendimento(props){
           <div class="field"><label>Mucosas</label><input id="at_mucosas" value="${d.mucosas}" placeholder="Ex: Normocoradas"></div>
           <div class="field"><label>Linfonodos</label><input id="at_linfonodos" value="${d.linfonodos}" placeholder="Ex: Sem alterações"></div>
         </div>
+      </div>
+
+      <div class="form-section">
+        <div class="fs-title">Exame físico</div>
+        <div class="form-row single"><div class="field"><label>Comentários e observações clínicas do exame físico</label><textarea id="at_exam_fisico" style="min-height:110px;" placeholder="Descreva aqui os achados do exame físico com mais detalhe (palpação, ausculta, pele e pelagem, aparelho locomotor, etc.), sem precisar sobrecarregar a anamnese ou as observações gerais...">${d.examFisico||''}</textarea></div></div>
       </div>
 
       <div class="form-section">
@@ -2350,7 +2503,7 @@ function modalAtendimento(props){
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-      <button class="btn btn-primary" data-action="save-atendimento">${ic('check','icon-sm')}Salvar atendimento</button>
+      <button class="btn btn-primary" data-action="save-atendimento">${ic('check','icon-sm')}${d.editId ? 'Salvar alterações' : 'Salvar atendimento'}</button>
     </div>
   </div>`;
 }
@@ -2373,19 +2526,32 @@ function modalReceita(props){
           <div class="fs-title" style="margin-bottom:10px;">Medicamento ${i+1}</div>
           <div class="form-row cols-3">
             <div class="field"><label>Medicamento</label><input id="rxmed_${i}_name" value="${m.name}" placeholder="Ex: Amoxicilina"></div>
-            <div class="field"><label>Dosagem</label><input id="rxmed_${i}_dosage" value="${m.dosage}" placeholder="Ex: 250mg"></div>
-            <div class="field"><label>Frequência</label><input id="rxmed_${i}_freq" value="${m.freq}" placeholder="Ex: 2x ao dia"></div>
+            <div class="field"><label>Dosagem/concentração</label><input id="rxmed_${i}_dosage" value="${m.dosage}" placeholder="Ex: 250mg"></div>
+            <div class="field"><label>Quantidade/apresentação</label><input id="rxmed_${i}_qty" value="${m.qty||''}" placeholder="Ex: 1 frasco, 1 comprimido, 1 unidade..."></div>
           </div>
           <div class="form-row">
+            <div class="field"><label>Frequência</label><input id="rxmed_${i}_freq" value="${m.freq}" placeholder="Ex: 2x ao dia"></div>
             <div class="field"><label>Duração</label><input id="rxmed_${i}_duration" value="${m.duration}" placeholder="Ex: 7 dias"></div>
+          </div>
+          <div class="form-row single">
             <div class="field"><label>Via de administração</label>
               <select id="rxmed_${i}_route">${['Oral','Tópica','Injetável','Oftálmica'].map(o=>`<option ${m.route===o?'selected':''}>${o}</option>`).join('')}</select>
             </div>
           </div>
-          <div class="field"><label>Orientações</label><textarea id="rxmed_${i}_orient" placeholder="Instruções para este medicamento...">${m.orientations}</textarea></div>
+          <div class="field"><label>Posologia (texto livre — ex: "1 cp VO a cada 12h", "1 gota no olho direito 2x ao dia"...)</label><textarea id="rxmed_${i}_posologia" placeholder="Escreva a posologia da forma que preferir...">${m.posologia||''}</textarea></div>
+          <div class="field"><label>Orientações deste medicamento</label><textarea id="rxmed_${i}_orient" placeholder="Instruções para este medicamento...">${m.orientations}</textarea></div>
           ${d.meds.length>1 ? `<button class="btn btn-danger-ghost btn-sm" style="margin-top:8px;" data-action="remove-rx-med" data-idx="${i}">${ic('trash','icon-sm')}Remover medicamento</button>` : ''}
         </div>`).join('')}
       <button class="btn btn-ghost btn-sm" data-action="add-rx-med">${ic('plus','icon-sm')}Adicionar medicamento</button>
+      <div class="divider"></div>
+      <div class="form-section" style="margin-bottom:14px;">
+        <div class="fs-title">Observações</div>
+        <div class="form-row single"><div class="field"><textarea id="rx_observacoes" style="min-height:100px;" placeholder="Observações clínicas sobre a receita...">${d.observacoes||''}</textarea></div></div>
+      </div>
+      <div class="form-section" style="margin-bottom:0;">
+        <div class="fs-title">Orientações gerais / texto livre</div>
+        <div class="form-row single"><div class="field"><textarea id="rx_orientations" style="min-height:100px;" placeholder="Qualquer orientação adicional para o tutor...">${d.orientations||''}</textarea></div></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
@@ -2402,7 +2568,7 @@ function modalExame(props){
     <div class="modal-head"><h3>Novo exame</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body">
       <div class="form-row"><div class="field"><label>Pet</label><select id="ex_pet">${petOptions(petId)}</select></div>
-      <div class="field"><label>Data</label><input type="date" id="ex_date" value="2026-09-01"></div></div>
+      <div class="field"><label>Data</label><input type="date" id="ex_date" value="${NOW_ISO_DATE}"></div></div>
       <div class="form-row">
         <div class="field"><label>Tipo de exame</label><input id="ex_type" placeholder="Ex: Hemograma completo"></div>
         <div class="field"><label>Valor (R$)</label><input id="ex_valor" type="number" placeholder="Ex: 100"></div>
@@ -2434,11 +2600,11 @@ function modalVacina(props){
       <div class="form-row"><div class="field"><label>Pet</label><select id="vc_pet">${petOptions(petId)}</select></div>
       <div class="field"><label>Vacina</label><input id="vc_name" placeholder="Ex: V10, Antirrábica..."></div></div>
       <div class="form-row cols-3">
-        <div class="field"><label>Data de aplicação</label><input type="date" id="vc_date" value="2026-09-01"></div>
+        <div class="field"><label>Data de aplicação</label><input type="date" id="vc_date" value="${NOW_ISO_DATE}"></div>
         <div class="field"><label>Lote</label><input id="vc_batch" placeholder="Ex: LT2305"></div>
         <div class="field"><label>Valor (R$)</label><input id="vc_valor" type="number" placeholder="Ex: 100"></div>
       </div>
-      <div class="form-row single"><div class="field"><label>Próxima dose</label><input type="date" id="vc_next" value="2027-09-01"></div></div>
+      <div class="form-row single"><div class="field"><label>Próxima dose</label><input type="date" id="vc_next" value="${isoAddYears(NOW_ISO_DATE,1)}"></div></div>
       <div class="form-row single"><div class="field"><label>Observações</label><textarea id="vc_notes" placeholder="Reações, cuidados especiais..."></textarea></div></div>
     </div>
     <div class="modal-foot">
@@ -2552,7 +2718,7 @@ function wizardPetStepHtml(w){
         <div class="field"><label>Sexo</label><select id="wp_sex"><option>Fêmea</option><option>Macho</option></select></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Data de nascimento</label><input type="date" id="wp_birth" min="1997-01-01" max="2026-09-01"></div>
+        <div class="field"><label>Data de nascimento</label><input type="date" id="wp_birth" min="1997-01-01" max="${NOW_ISO_DATE}"></div>
         <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="wp_weight" placeholder="Ex: 12.5"></div>
       </div>
       <div class="form-row single"><div class="field"><label>Microchip</label><input id="wp_chip" placeholder="Opcional"></div></div>
@@ -2606,7 +2772,7 @@ function modalNovoPetTutor(props){
         <div class="field"><label>Sexo</label><select id="nptu_sex"><option>Fêmea</option><option>Macho</option></select></div>
       </div>
       <div class="form-row">
-        <div class="field"><label>Data de nascimento</label><input type="date" id="nptu_birth" min="1997-01-01" max="2026-09-01"></div>
+        <div class="field"><label>Data de nascimento</label><input type="date" id="nptu_birth" min="1997-01-01" max="${NOW_ISO_DATE}"></div>
         <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="nptu_weight" placeholder="Ex: 12.5"></div>
       </div>
       <div class="form-row single"><div class="field"><label>Microchip</label><input id="nptu_chip" placeholder="Opcional"></div></div>
@@ -2633,7 +2799,18 @@ function modalEditPet(props){
         <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="ep_weight" value="${p.weight}"></div>
         <div class="field"><label>Sexo</label><select id="ep_sex"><option ${p.sex==='Fêmea'?'selected':''}>Fêmea</option><option ${p.sex==='Macho'?'selected':''}>Macho</option></select></div>
       </div>
-      <div class="form-row single"><div class="field"><label>Data de nascimento</label><input type="date" id="ep_birth" value="${p.birth||''}" min="1997-01-01" max="2026-09-01"></div></div>
+      <div class="form-row single"><div class="field"><label>Data de nascimento</label><input type="date" id="ep_birth" value="${p.birth||''}" min="1997-01-01" max="${NOW_ISO_DATE}"></div></div>
+      <div class="form-row single">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="ep_has_chip" style="width:auto;" ${p.microchip ? 'checked' : ''} onchange="document.getElementById('ep_chip_wrap').style.display = this.checked ? '' : 'none';">
+            Possui microchip
+          </label>
+        </div>
+      </div>
+      <div class="form-row single" id="ep_chip_wrap" style="${p.microchip ? '' : 'display:none;'}">
+        <div class="field"><label>Número do microchip</label><input id="ep_chip" value="${p.microchip||''}" placeholder="Ex: 982000123456789"></div>
+      </div>
       <div class="form-row single"><div class="field"><label>Observações</label><textarea id="ep_notes">${p.notes}</textarea></div></div>
     </div>
     <div class="modal-foot" style="justify-content:space-between;">
@@ -2664,7 +2841,7 @@ function modalNovoTutor(props){
 /* ---------- Detalhe de item da timeline ---------- */
 function modalTimelineDetail(props){
   const { type, id } = props;
-  let title='', body='';
+  let title='', body='', foot='';
   if(type==='consulta'){
     const c = DB.consultations.find(x=>x.id===id); const pet = getPet(c.petId);
     title = `Consulta — ${pet.name}`;
@@ -2679,31 +2856,41 @@ function modalTimelineDetail(props){
           ${c.mucosas?`<span><b>${c.mucosas}</b> mucosas</span>`:''}${c.linfonodos?`<span><b>${c.linfonodos}</b> linfonodos</span>`:''}
         </div>
       </div>
+      ${c.examFisico ? `<div class="form-section"><div class="fs-title">Exame físico</div><p style="margin:0;font-size:14.5px;color:var(--ink-muted);white-space:pre-wrap;">${c.examFisico}</p></div>` : ''}
       <div class="form-section"><div class="fs-title">Diagnóstico</div><p style="margin:0;font-size:14.5px;">${c.diagnosis}</p></div>
       <div class="form-section" style="margin-bottom:0;"><div class="fs-title">Conduta</div><p style="margin:0;font-size:14.5px;">${c.conduct}</p></div>
       ${c.valor ? `<div class="divider"></div>${moneyBadge('consulta', c.id, c.valor)}` : ''}
     `;
+    if(STATE.role==='vet'){
+      foot = `
+      <div class="modal-foot" style="justify-content:space-between;">
+        <button class="btn btn-danger-ghost" data-action="open-confirm-delete-consultation" data-consultation-id="${c.id}">${ic('trash','icon-sm')}Excluir atendimento</button>
+        <button class="btn btn-primary" data-action="open-edit-atendimento" data-consultation-id="${c.id}">${ic('edit','icon-sm')}Editar atendimento</button>
+      </div>`;
+    }
   } else if(type==='receita'){
     const r = DB.prescriptions.find(x=>x.id===id); const pet = getPet(r.petId); const tutor = getTutorOfPet(r.petId);
     title = `Receita — ${pet.name}`;
     body = `
       <div class="card pad-lg" style="border:1.5px solid var(--primary-soft-2);">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;">
-          <div><b style="font-size:15px;">${DB.vet.name}</b><div style="font-size:12.5px;color:var(--ink-muted);">${DB.vet.crmv}</div></div>
+          <div><b style="font-size:15px;">${DB.vet.name}</b><div style="font-size:12.5px;color:var(--ink-muted);">${DB.vet.crmv}${DB.vet.clinic?' · '+DB.vet.clinic:''}</div></div>
           <div style="text-align:right;font-size:12.5px;color:var(--ink-muted);">${fmtDateFull(r.date)}</div>
         </div>
         <div style="font-size:13px;color:var(--ink-muted);margin-bottom:16px;">Paciente: <b style="color:var(--ink);">${pet.name}</b> · Tutor: <b style="color:var(--ink);">${tutor.name}</b></div>
         ${r.meds.map((m,i)=>`
           <div style="padding:12px 0;border-top:1px solid var(--line);">
-            <b style="font-size:14.5px;">${i+1}. ${m.name} — ${m.dosage}</b>
-            <div style="font-size:13px;color:var(--ink-muted);margin-top:2px;">${m.freq} · ${m.duration} · via ${m.route}</div>
-            ${m.orientations?`<div style="font-size:12.5px;color:var(--ink-muted);margin-top:4px;">${m.orientations}</div>`:''}
+            <b style="font-size:14.5px;">${i+1}. ${m.name}${m.dosage&&m.dosage!=='—'?' — '+m.dosage:''}</b>
+            <div style="font-size:13px;color:var(--ink-muted);margin-top:2px;">${m.qty?`Quantidade: ${m.qty} · `:''}via ${m.route}</div>
+            ${m.posologia ? `<div style="font-size:13.5px;margin-top:6px;white-space:pre-wrap;"><b>Posologia:</b> ${m.posologia}</div>` : `<div style="font-size:13px;color:var(--ink-muted);margin-top:4px;">${m.freq} · ${m.duration}</div>`}
+            ${m.orientations?`<div style="font-size:12.5px;color:var(--ink-muted);margin-top:4px;white-space:pre-wrap;">${m.orientations}</div>`:''}
           </div>`).join('')}
-        ${r.orientations?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;"><b>Orientações gerais:</b> ${r.orientations}</div>`:''}
+        ${r.observacoes?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;"><b>Observações:</b> ${r.observacoes}</div>`:''}
+        ${r.orientations?`<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;"><b>Orientações gerais:</b> ${r.orientations}</div>`:''}
       </div>
       <div style="display:flex;gap:10px;margin-top:16px;">
-        <button class="btn btn-ghost btn-sm">${ic('download','icon-sm')}Baixar PDF</button>
-        <button class="btn btn-ghost btn-sm">${ic('file','icon-sm')}Imprimir</button>
+        <button class="btn btn-ghost btn-sm" data-action="print-receita" data-id="${r.id}">${ic('download','icon-sm')}Baixar PDF</button>
+        <button class="btn btn-ghost btn-sm" data-action="print-receita" data-id="${r.id}">${ic('file','icon-sm')}Imprimir</button>
       </div>
     `;
   } else if(type==='exame'){
@@ -2745,18 +2932,20 @@ function modalTimelineDetail(props){
   <div class="modal" data-modal-inner style="max-width:520px;">
     <div class="modal-head"><h3>${title}</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body">${body}</div>
+    ${foot}
   </div>`;
 }
 
 function modalNotifications(props){
+  const items = getNotificationItems();
   return `
   <div class="modal" data-modal-inner style="max-width:420px;">
     <div class="modal-head"><h3>Notificações</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body" style="padding:8px 0;">
-      ${DB.notifications.length ? DB.notifications.map(n=>`
+      ${items.length ? items.map(n=>`
         <div class="doc-row" style="padding:14px 26px;">
-          <span class="doc-ic" style="${n.read?'':'background:var(--accent-soft);color:var(--accent);'}">${ic('bell','icon-sm')}</span>
-          <div><div style="font-size:13.5px;font-weight:${n.read?'500':'700'};">${n.text}</div><div style="font-size:12px;color:var(--ink-muted);margin-top:2px;">${n.time}</div></div>
+          <span class="doc-ic" style="${n.kind==='danger'?'background:var(--danger-soft);color:var(--danger);':n.kind==='success'?'background:var(--success-soft);color:var(--success);':'background:var(--accent-soft);color:var(--accent);'}">${ic('bell','icon-sm')}</span>
+          <div><div style="font-size:13.5px;font-weight:700;">${n.text}</div><div style="font-size:12px;color:var(--ink-muted);margin-top:2px;">${n.time}</div></div>
         </div>`).join('') : `<div style="padding:30px 26px;text-align:center;color:var(--ink-muted);font-size:13.5px;">Nenhuma notificação por aqui ainda.</div>`}
     </div>
   </div>`;
@@ -3011,7 +3200,7 @@ function currentTutor(){ return getTutor(STATE.currentTutorId); }
 function renderTutorDashboard(){
   const t = currentTutor();
   const pets = petsOfTutor(t.id);
-  const nextAppt = DB.appointments.filter(a=>pets.some(p=>p.id===a.petId) && a.date>='2026-09-01').sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time))[0];
+  const nextAppt = DB.appointments.filter(a=>pets.some(p=>p.id===a.petId) && a.date>=NOW_ISO_DATE).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time))[0];
   const registros = pets.flatMap(p=>petTimeline(p.id).map(x=>({...x, pet:p}))).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,4);
   const typeCfg = { consulta:{icon:'stethoscope', label:'Consulta', bg:'var(--primary-soft)', fg:'var(--primary)'}, receita:{icon:'pill', label:'Receita', bg:'var(--accent-soft)', fg:'var(--accent)'}, exame:{icon:'flask', label:'Exame', bg:'#EFE9FA', fg:'#7B61C7'}, vacina:{icon:'syringe', label:'Vacina', bg:'var(--success-soft)', fg:'var(--success)'}, pagamento:{icon:'wallet', label:'Pagamento', bg:'var(--success-soft)', fg:'var(--success)'} };
   const novosResultados = DB.exams.filter(e=>pets.some(p=>p.id===e.petId) && e.status==='Resultado disponível').sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,2);
@@ -3020,7 +3209,7 @@ function renderTutorDashboard(){
     <div class="tutor-top">
       <div class="row1">
         <span style="font-weight:700;display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent);"></span>PetFlow</span>
-        <button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button>
+        ${tutorBellBtn()}
       </div>
       <h1>Olá, ${t.name.split(' ')[0]}! 🐾</h1>
       <p>Como estão seus pets?</p>
@@ -3091,7 +3280,7 @@ function renderTutorPets(){
   const pets = petsOfTutor(t.id);
   return `
     <div class="tutor-top" style="border-radius:0 0 24px 24px;padding-bottom:16px;">
-      <div class="row1"><h1 style="margin:0;font-size:20px;">Meus Pets 🐾</h1><button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button></div>
+      <div class="row1"><h1 style="margin:0;font-size:20px;">Meus Pets 🐾</h1>${tutorBellBtn()}</div>
     </div>
     <div class="tutor-body">
       <button class="btn btn-primary btn-block" style="margin-bottom:16px;" data-action="open-novo-pet-tutor">${ic('plus','icon-sm')}Cadastrar meu pet</button>
@@ -3116,7 +3305,7 @@ function renderTutorPetDetail(petId){
     <div class="tutor-top" style="border-radius:0 0 24px 24px;">
       <div class="row1">
         <button class="tutor-topbtn" data-action="nav" data-view="tutor-pets">${ic('chevronLeft','icon-sm')}</button>
-        <button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button>
+        ${tutorBellBtn()}
       </div>
       <div style="display:flex;align-items:center;gap:14px;margin-top:10px;">
         ${petPhotoUploadWrap(p, 60, 28)}
@@ -3167,11 +3356,11 @@ function renderTutorAgenda(){
   const t = currentTutor();
   const pets = petsOfTutor(t.id);
   const appts = DB.appointments.filter(a=>pets.some(p=>p.id===a.petId)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-  const upcoming = appts.filter(a=>a.date>='2026-09-01' && a.status!=='Realizado');
-  const past = appts.filter(a=>a.date<'2026-09-01' || a.status==='Realizado');
+  const upcoming = appts.filter(a=>a.date>=NOW_ISO_DATE && a.status!=='Realizado');
+  const past = appts.filter(a=>a.date<NOW_ISO_DATE || a.status==='Realizado');
   return `
     <div class="tutor-top" style="border-radius:0 0 24px 24px;padding-bottom:16px;">
-      <div class="row1"><h1 style="margin:0;font-size:20px;">Agenda 📅</h1><button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button></div>
+      <div class="row1"><h1 style="margin:0;font-size:20px;">Agenda 📅</h1>${tutorBellBtn()}</div>
     </div>
     <div class="tutor-body">
       <button class="btn btn-accent btn-block" data-action="nav" data-view="tutor-agendamento">${ic('plus','icon-sm')}Solicitar novo atendimento</button>
@@ -3371,7 +3560,7 @@ function renderTutorDocumentos(){
 
   return `
     <div class="tutor-top" style="border-radius:0 0 24px 24px;padding-bottom:16px;">
-      <div class="row1"><h1 style="margin:0;font-size:20px;">Documentos 📄</h1><button class="tutor-topbtn" data-action="toggle-notif">${ic('bell','icon-sm')}</button></div>
+      <div class="row1"><h1 style="margin:0;font-size:20px;">Documentos 📄</h1>${tutorBellBtn()}</div>
     </div>
     <div class="tutor-body">
       <div class="card">
@@ -3484,6 +3673,7 @@ document.addEventListener('change', function(e){
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){
     if(STATE.confirmDeletePetId){ e.preventDefault(); STATE.confirmDeletePetId = null; render(); return; }
+    if(STATE.confirmDeleteConsultationId){ e.preventDefault(); STATE.confirmDeleteConsultationId = null; render(); return; }
     if(STATE.modal){
       e.preventDefault();
       if(STATE.confirmDiscard){ STATE.confirmDiscard = false; render(); }
@@ -3528,6 +3718,51 @@ document.addEventListener('drop', async function(e){
   }
 });
 
+/* ---------- Receita em PDF ----------
+   Sem lib externa: monta uma página limpa dentro de #print-area (escondida
+   na tela normal) e aciona o diálogo de impressão do navegador — o tutor
+   ou a veterinária escolhe "Salvar como PDF" como destino. Reaproveita os
+   mesmos dados da receita já exibidos na tela (nenhum dado novo é criado). */
+function receitaPrintHtml(r){
+  const pet = getPet(r.petId); const tutor = getTutorOfPet(r.petId);
+  return `
+    <div class="rx-print-page">
+      <div class="rxp-head">
+        <div>
+          <h1>${DB.vet.name}</h1>
+          <div class="rxp-vet-meta">${DB.vet.crmv||''}${DB.vet.clinic?' · '+DB.vet.clinic:''}${DB.vet.phone?'<br>'+DB.vet.phone:''}</div>
+        </div>
+        <div class="rxp-date">Receituário<br>${fmtDateFull(r.date)}</div>
+      </div>
+      <div class="rxp-patient">Paciente: <b>${pet.name}</b> (${pet.species}${pet.breed?', '+pet.breed:''}) · Tutor(a): <b>${tutor.name}</b></div>
+      ${r.meds.map((m,i)=>`
+        <div class="rxp-med">
+          <div class="rxp-med-title">${i+1}. ${m.name}${m.dosage&&m.dosage!=='—'?' — '+m.dosage:''}</div>
+          <div class="rxp-med-line">${m.qty?`Quantidade/apresentação: ${m.qty} · `:''}Via: ${m.route}</div>
+          ${m.posologia ? `<div class="rxp-med-posologia"><b>Posologia:</b> ${m.posologia}</div>` : (m.freq||m.duration) ? `<div class="rxp-med-line">${[m.freq,m.duration].filter(Boolean).join(' · ')}</div>` : ''}
+          ${m.orientations?`<div class="rxp-med-orient">${m.orientations}</div>`:''}
+        </div>`).join('')}
+      ${r.observacoes?`<div class="rxp-block"><b>Observações</b>${r.observacoes}</div>`:''}
+      ${r.orientations?`<div class="rxp-block"><b>Orientações gerais</b>${r.orientations}</div>`:''}
+      <div class="rxp-sign">
+        <div class="line"></div>
+        <div class="name">${DB.vet.name}</div>
+        <div class="crmv">${DB.vet.crmv||''}</div>
+      </div>
+    </div>`;
+}
+function printReceita(rxId){
+  const r = DB.prescriptions.find(x=>x.id===rxId);
+  if(!r){ showToast('Receita não encontrada.', 'warn'); return; }
+  const area = document.getElementById('print-area');
+  area.innerHTML = receitaPrintHtml(r);
+  window.print();
+}
+window.addEventListener('afterprint', function(){
+  const area = document.getElementById('print-area');
+  if(area) area.innerHTML = '';
+});
+
 document.addEventListener('click', async function(e){
   const actionEl = e.target.closest('[data-action]');
   if(!actionEl) return;
@@ -3570,6 +3805,12 @@ document.addEventListener('click', async function(e){
     case 'nav': navigate(d.view, { petId: d.petId, tutorId: d.tutorId }); break;
 
     case 'open-atendimento': DRAFT_AT = freshDraftAt(d.petId); MODAL_DIRTY=false; openModal('atendimento', {petId: d.petId}); break;
+    case 'open-edit-atendimento': {
+      const c = DB.consultations.find(x=>x.id===d.consultationId);
+      if(!c){ showToast('Atendimento não encontrado.', 'warn'); break; }
+      DRAFT_AT = draftAtFromConsultation(c); MODAL_DIRTY=false; openModal('atendimento', {petId: c.petId});
+      break;
+    }
     case 'open-receita': DRAFT_RX = freshDraftRx(d.petId); MODAL_DIRTY=false; openModal('receita', {petId: d.petId}); break;
     case 'open-exame': MODAL_DIRTY=false; openModal('exame', {petId: d.petId}); break;
     case 'open-vacina': MODAL_DIRTY=false; openModal('vacina', {petId: d.petId}); break;
@@ -3708,25 +3949,27 @@ document.addEventListener('click', async function(e){
     }
 
     case 'close-modal': attemptCloseModal(); break;
+    case 'print-receita': printReceita(d.id); break;
 
     /* --- Itens dinâmicos: atendimento (exames/vacinas) --- */
     case 'add-at-exam': syncAtDraftFromDOM(); DRAFT_AT.exams.push({type:'',valor:'',obs:''}); rerenderModalPreserveScroll(); break;
     case 'remove-at-exam': syncAtDraftFromDOM(); DRAFT_AT.exams.splice(parseInt(d.idx),1); rerenderModalPreserveScroll(); break;
-    case 'add-at-vaccine': syncAtDraftFromDOM(); DRAFT_AT.vaccines.push({name:'',date:'2026-09-01',batch:'',next:'2027-09-01',valor:''}); rerenderModalPreserveScroll(); break;
+    case 'add-at-vaccine': syncAtDraftFromDOM(); DRAFT_AT.vaccines.push({name:'',date:NOW_ISO_DATE,batch:'',next:isoAddYears(NOW_ISO_DATE,1),valor:''}); rerenderModalPreserveScroll(); break;
     case 'remove-at-vaccine': syncAtDraftFromDOM(); DRAFT_AT.vaccines.splice(parseInt(d.idx),1); rerenderModalPreserveScroll(); break;
 
     /* --- Itens dinâmicos: receita (medicamentos) --- */
-    case 'add-rx-med': syncRxDraftFromDOM(); DRAFT_RX.meds.push({name:'',dosage:'',freq:'',duration:'',route:'Oral',orientations:''}); rerenderModalPreserveScroll(); break;
-    case 'remove-rx-med': syncRxDraftFromDOM(); DRAFT_RX.meds.splice(parseInt(d.idx),1); if(!DRAFT_RX.meds.length) DRAFT_RX.meds.push({name:'',dosage:'',freq:'',duration:'',route:'Oral',orientations:''}); rerenderModalPreserveScroll(); break;
+    case 'add-rx-med': syncRxDraftFromDOM(); DRAFT_RX.meds.push({name:'',dosage:'',qty:'',freq:'',duration:'',route:'Oral',posologia:'',orientations:''}); rerenderModalPreserveScroll(); break;
+    case 'remove-rx-med': syncRxDraftFromDOM(); DRAFT_RX.meds.splice(parseInt(d.idx),1); if(!DRAFT_RX.meds.length) DRAFT_RX.meds.push({name:'',dosage:'',qty:'',freq:'',duration:'',route:'Oral',posologia:'',orientations:''}); rerenderModalPreserveScroll(); break;
 
     case 'save-atendimento': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       syncAtDraftFromDOM();
       const b = DRAFT_AT;
       const petId = b.petId;
+      const isEdit = !!b.editId;
       const c = {
-        id: uid('c'), petId, date: b.date || '2026-09-01',
-        reason: b.reason || 'Consulta', anamnesis: b.anamnesis,
+        id: b.editId || uid('c'), petId, date: b.date || NOW_ISO_DATE,
+        reason: b.reason || 'Consulta', anamnesis: b.anamnesis, examFisico: b.examFisico||'',
         weight: parseFloat(b.weight) || currentWeight(petId),
         temp: b.temp || '—', hr: b.hr || '—', rr: b.rr || '—',
         tpc: b.tpc, hidratacao: b.hidratacao, mucosas: b.mucosas, linfonodos: b.linfonodos,
@@ -3739,15 +3982,37 @@ document.addEventListener('click', async function(e){
       const pendingPayments = [];
       const pendingExams = [];
       const pendingVaccines = [];
+      // Só a consulta mais recente do pet é que "define" o peso atual dele —
+      // editar uma consulta antiga não deve reescrever o peso corrente do pet.
+      const isMostRecent = !isEdit || (lastConsultation(petId) && lastConsultation(petId).id === c.id);
 
       try{
-        if(remoteReady()) await dbInsertConsultation(c);
-        DB.consultations.push(c);
-        pet.weight = c.weight;
-        if(remoteReady() && pet.weight !== prevWeight) await dbUpdatePet(petId, {weight: pet.weight});
-        if(c.valor>0){
-          const pay = createPayment({petId, date:c.date, service:'Consulta', valor:c.valor, refType:'consulta', refId:c.id});
-          if(pay){ pendingPayments.push(pay); if(remoteReady()) await dbInsertPayment(pay); }
+        if(isEdit){
+          const existing = DB.consultations.find(x=>x.id===c.id);
+          if(!existing){ throw new Error('Atendimento não encontrado — pode já ter sido excluído.'); }
+          if(remoteReady()) await dbUpdateConsultation(c.id, c);
+          Object.assign(existing, c);
+          if(isMostRecent && pet.weight !== c.weight){
+            pet.weight = c.weight;
+            if(remoteReady()) await dbUpdatePet(petId, {weight: pet.weight});
+          }
+          const existingPay = paymentForRef('consulta', c.id);
+          if(existingPay && existingPay.valor !== c.valor){
+            existingPay.valor = c.valor;
+            if(remoteReady()) await dbUpdatePaymentValor(existingPay.id, c.valor);
+          } else if(!existingPay && c.valor>0){
+            const pay = createPayment({petId, date:c.date, service:'Consulta', valor:c.valor, refType:'consulta', refId:c.id});
+            if(pay){ pendingPayments.push(pay); if(remoteReady()) await dbInsertPayment(pay); }
+          }
+        } else {
+          if(remoteReady()) await dbInsertConsultation(c);
+          DB.consultations.push(c);
+          pet.weight = c.weight;
+          if(remoteReady() && pet.weight !== prevWeight) await dbUpdatePet(petId, {weight: pet.weight});
+          if(c.valor>0){
+            const pay = createPayment({petId, date:c.date, service:'Consulta', valor:c.valor, refType:'consulta', refId:c.id});
+            if(pay){ pendingPayments.push(pay); if(remoteReady()) await dbInsertPayment(pay); }
+          }
         }
 
         for(const ex of b.exams){
@@ -3762,7 +4027,7 @@ document.addEventListener('click', async function(e){
         }
         for(const vc of b.vaccines){
           if(!vc.name) continue;
-          const rec = { id: uid('v'), petId, vaccine: vc.name, date: vc.date||c.date, batch: vc.batch||'—', nextDate: vc.next||'2027-09-01', valor: parseFloat(vc.valor)||0, notes:'' };
+          const rec = { id: uid('v'), petId, vaccine: vc.name, date: vc.date||c.date, batch: vc.batch||'—', nextDate: vc.next||isoAddYears(vc.date||c.date,1), valor: parseFloat(vc.valor)||0, notes:'' };
           if(remoteReady()) await dbInsertVaccine(rec);
           DB.vaccines.push(rec); pendingVaccines.push(rec);
           if(rec.valor>0){
@@ -3773,7 +4038,7 @@ document.addEventListener('click', async function(e){
 
         DRAFT_AT = null;
         doCloseModal();
-        showToast(`Atendimento salvo${pendingExams.length?` · ${pendingExams.length} exame(s)`:''}${pendingVaccines.length?` · ${pendingVaccines.length} vacina(s)`:''}.`);
+        showToast(`${isEdit?'Atendimento atualizado':'Atendimento salvo'}${pendingExams.length?` · ${pendingExams.length} exame(s)`:''}${pendingVaccines.length?` · ${pendingVaccines.length} vacina(s)`:''}.`);
         navigate('vet-pet-detail', {petId});
       } catch(err){
         reportSaveError(err); break;
@@ -3785,8 +4050,8 @@ document.addEventListener('click', async function(e){
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       syncRxDraftFromDOM();
       const petId = DRAFT_RX.petId;
-      const meds = DRAFT_RX.meds.filter(m=>m.name).map(m=>({ name:m.name, dosage:m.dosage||'—', freq:m.freq||'—', duration:m.duration||'—', route:m.route||'Oral', orientations:m.orientations||'' }));
-      const r = { id: uid('r'), petId, date: DRAFT_RX.date || '2026-09-01', meds: meds.length?meds:[{name:'Medicamento',dosage:'—',freq:'—',duration:'—',route:'Oral',orientations:''}], orientations:'' };
+      const meds = DRAFT_RX.meds.filter(m=>m.name).map(m=>({ name:m.name, dosage:m.dosage||'—', qty:m.qty||'', freq:m.freq||'—', duration:m.duration||'—', route:m.route||'Oral', posologia:m.posologia||'', orientations:m.orientations||'' }));
+      const r = { id: uid('r'), petId, date: DRAFT_RX.date || NOW_ISO_DATE, meds: meds.length?meds:[{name:'Medicamento',dosage:'—',qty:'',freq:'—',duration:'—',route:'Oral',posologia:'',orientations:''}], orientations: DRAFT_RX.orientations||'', observacoes: DRAFT_RX.observacoes||'' };
       try{
         if(remoteReady()) await dbInsertPrescription(r);
         DB.prescriptions.push(r);
@@ -3802,7 +4067,7 @@ document.addEventListener('click', async function(e){
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const petId = val('ex_pet');
       const valor = num('ex_valor');
-      const ex = { id: uid('e'), petId, date: val('ex_date') || '2026-09-01', type: val('ex_type')||'Exame', valor, description: val('ex_desc'), result:'', observacoes:'', anexo:'', status:'Solicitado' };
+      const ex = { id: uid('e'), petId, date: val('ex_date') || NOW_ISO_DATE, type: val('ex_type')||'Exame', valor, description: val('ex_desc'), result:'', observacoes:'', anexo:'', status:'Solicitado' };
       try{
         if(remoteReady()) await dbInsertExam(ex);
         DB.exams.push(ex);
@@ -3821,7 +4086,7 @@ document.addEventListener('click', async function(e){
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const petId = val('vc_pet');
       const valor = num('vc_valor');
-      const v = { id: uid('v'), petId, vaccine: val('vc_name')||'Vacina', date: val('vc_date')||'2026-09-01', batch: val('vc_batch')||'—', nextDate: val('vc_next')||'2027-09-01', valor, notes: val('vc_notes') };
+      const v = { id: uid('v'), petId, vaccine: val('vc_name')||'Vacina', date: val('vc_date')||NOW_ISO_DATE, batch: val('vc_batch')||'—', nextDate: val('vc_next')||isoAddYears(val('vc_date')||NOW_ISO_DATE,1), valor, notes: val('vc_notes') };
       try{
         if(remoteReady()) await dbInsertVaccine(v);
         DB.vaccines.push(v);
@@ -3998,8 +4263,9 @@ document.addEventListener('click', async function(e){
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       const p = getPet(d.petId);
       if(!p){ SAVE_LOCK=false; break; }
-      const fields = { name: val('ep_name')||p.name, breed: val('ep_breed')||p.breed, weight: parseFloat(val('ep_weight'))||p.weight, sex: val('ep_sex')||p.sex, notes: val('ep_notes'), birth: val('ep_birth')||p.birth };
-      const prev = { name:p.name, breed:p.breed, weight:p.weight, sex:p.sex, notes:p.notes, birth:p.birth };
+      const hasChip = !!document.getElementById('ep_has_chip') && document.getElementById('ep_has_chip').checked;
+      const fields = { name: val('ep_name')||p.name, breed: val('ep_breed')||p.breed, weight: parseFloat(val('ep_weight'))||p.weight, sex: val('ep_sex')||p.sex, notes: val('ep_notes'), birth: val('ep_birth')||p.birth, microchip: hasChip ? (val('ep_chip')||'') : '' };
+      const prev = { name:p.name, breed:p.breed, weight:p.weight, sex:p.sex, notes:p.notes, birth:p.birth, microchip:p.microchip };
       Object.assign(p, fields);
       try{
         if(remoteReady()) await dbUpdatePet(p.id, fields);
@@ -4031,6 +4297,30 @@ document.addEventListener('click', async function(e){
         showToast('Pet excluído.');
         navigate(STATE.role==='vet' ? 'vet-pets' : 'tutor-pets');
       } catch(err){ STATE.confirmDeletePetId = null; reportSaveError(err); break; }
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+
+    case 'open-confirm-delete-consultation': STATE.confirmDeleteConsultationId = d.consultationId; render(); break;
+    case 'cancel-delete-consultation': STATE.confirmDeleteConsultationId = null; render(); break;
+    case 'confirm-delete-consultation': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const consultationId = d.consultationId;
+      const c = DB.consultations.find(x=>x.id===consultationId);
+      const petId = c ? c.petId : null;
+      try{
+        const linkedPay = paymentForRef('consulta', consultationId);
+        if(remoteReady()) await dbDeleteConsultation(consultationId);
+        if(linkedPay){
+          if(remoteReady()) await dbDeletePayment(linkedPay.id);
+          DB.payments = DB.payments.filter(p=>p.id!==linkedPay.id);
+        }
+        DB.consultations = DB.consultations.filter(x=>x.id!==consultationId);
+        STATE.confirmDeleteConsultationId = null;
+        doCloseModal();
+        showToast('Atendimento excluído.');
+        if(petId) navigate('vet-pet-detail', {petId});
+      } catch(err){ STATE.confirmDeleteConsultationId = null; reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
