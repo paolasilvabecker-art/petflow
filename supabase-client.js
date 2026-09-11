@@ -74,6 +74,7 @@ async function dbUpdatePet(petId, fields){
   if('sex' in fields) payload.sex = fields.sex;
   if('notes' in fields) payload.notes = fields.notes;
   if('birth' in fields) payload.birth = fields.birth;
+  if('microchip' in fields) payload.microchip = fields.microchip;
   if('photo' in fields) payload.photo_url = fields.photo;
   const { error } = await supa.from('pets').update(payload).eq('id', petId);
   if(error) throw error;
@@ -106,10 +107,25 @@ function currentVetId(){ return DB.vet && DB.vet.id ? DB.vet.id : null; }
 async function dbInsertConsultation(c){
   requireSupa();
   const { error } = await supa.from('consultations').insert({
-    id:c.id, pet_id:c.petId, vet_id: currentVetId(), date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:c.weight,
+    id:c.id, pet_id:c.petId, vet_id: currentVetId(), date:c.date, reason:c.reason, anamnesis:c.anamnesis, exam_fisico:c.examFisico||'', weight:c.weight,
     temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos,
     diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:c.valor||0,
   });
+  if(error) throw error;
+}
+async function dbUpdateConsultation(consultationId, fields){
+  requireSupa();
+  const payload = {};
+  const map = { reason:'reason', anamnesis:'anamnesis', examFisico:'exam_fisico', weight:'weight', temp:'temp', hr:'hr', rr:'rr',
+    tpc:'tpc', hidratacao:'hidratacao', mucosas:'mucosas', linfonodos:'linfonodos', diagnosis:'diagnosis', conduct:'conduct',
+    notes:'notes', valor:'valor', date:'date' };
+  Object.keys(map).forEach(k=>{ if(k in fields) payload[map[k]] = fields[k]; });
+  const { error } = await supa.from('consultations').update(payload).eq('id', consultationId);
+  if(error) throw error;
+}
+async function dbDeleteConsultation(consultationId){
+  requireSupa();
+  const { error } = await supa.from('consultations').delete().eq('id', consultationId);
   if(error) throw error;
 }
 async function dbInsertExam(e){
@@ -129,12 +145,22 @@ async function dbInsertVaccine(v){
 }
 async function dbInsertPrescription(r){
   requireSupa();
-  const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, vet_id: currentVetId(), date:r.date, meds:r.meds, orientations:r.orientations||'' });
+  const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, vet_id: currentVetId(), date:r.date, meds:r.meds, orientations:r.orientations||'', observacoes:r.observacoes||'' });
   if(error) throw error;
 }
 async function dbInsertPayment(p){
   requireSupa();
   const { error } = await supa.from('payments').insert({ id:p.id, pet_id:p.petId, vet_id: currentVetId(), date:p.date, service:p.service, ref_type:p.refType, ref_id:p.refId, valor:p.valor, status:p.status });
+  if(error) throw error;
+}
+async function dbUpdatePaymentValor(paymentId, valor){
+  requireSupa();
+  const { error } = await supa.from('payments').update({ valor }).eq('id', paymentId);
+  if(error) throw error;
+}
+async function dbDeletePayment(paymentId){
+  requireSupa();
+  const { error } = await supa.from('payments').delete().eq('id', paymentId);
   if(error) throw error;
 }
 async function dbUpdatePaymentsStatus(payIds, forma, parcelas, paidDate){
@@ -184,7 +210,37 @@ async function dbBlockSlotRange(date, slots){
   if(error) throw error;
 }
 
-/* ---------- Fotos: upload real no Supabase Storage ---------- */
+/* ---------- Fotos: upload real no Supabase Storage ----------
+   Antes disso, o upload de foto feito pela TELA DO TUTOR "funcionava" na
+   hora (a imagem aparecia porque o app atualizava o objeto local), mas não
+   existia nenhuma política de UPDATE para tutores nas tabelas `pets`/
+   `tutors` — o Supabase simplesmente ignora silenciosamente um UPDATE que
+   a RLS não deixa enxergar (não é um erro), então nada era realmente
+   gravado. Ao recarregar a página, os dados vinham de novo do banco sem a
+   foto — por isso ela "sumia". A gravação de veterinário(a) já funcionava
+   normalmente, pois `vets` tem acesso total às tabelas.
+   A correção usa duas funções RPC (`update_own_pet_photo` e
+   `update_own_tutor_photo`, ver migration_2026-09-11.sql) que gravam
+   SOMENTE a coluna de foto do próprio pet/tutor, sem abrir permissão de
+   edição geral para tutores — nenhuma tabela nova, mesmo Storage já usado. */
+async function savePetPhoto(petId, url){
+  requireSupa();
+  if(typeof STATE !== 'undefined' && STATE.role === 'tutor'){
+    const { error } = await supa.rpc('update_own_pet_photo', { p_pet_id: petId, p_photo_url: url });
+    if(error) throw error;
+  } else {
+    await dbUpdatePet(petId, { photo: url });
+  }
+}
+async function saveTutorPhoto(tutorId, url){
+  requireSupa();
+  if(typeof STATE !== 'undefined' && STATE.role === 'tutor'){
+    const { error } = await supa.rpc('update_own_tutor_photo', { p_photo_url: url });
+    if(error) throw error;
+  } else {
+    await dbUpdateTutor(tutorId, { photo: url });
+  }
+}
 async function handlePhotoUpload(kind, id, file){
   if(!SUPABASE_CONFIGURED || !supa){ showToast('Conecte o Supabase para enviar fotos.', 'warn'); return; }
   try{
@@ -196,10 +252,10 @@ async function handlePhotoUpload(kind, id, file){
     const { data: pub } = supa.storage.from('photos').getPublicUrl(path);
     const url = pub.publicUrl;
     if(kind==='pet'){
-      await dbUpdatePet(id, { photo: url });
+      await savePetPhoto(id, url);
       const pet = getPet(id); if(pet) pet.photo = url;
     } else {
-      await dbUpdateTutor(id, { photo: url });
+      await saveTutorPhoto(id, url);
       const t = getTutor(id); if(t) t.photo = url;
     }
     showToast('Foto atualizada!');
@@ -288,8 +344,8 @@ async function loadAllFromSupabase(){
   DB.appointments = (appointments.data||[]).map(a=>({ id:a.id, petId:a.pet_id, date:a.date, time:a.time.slice(0,5), type:a.type, modality:a.modality, status:a.status, proposedSlots:a.proposed_slots }));
   // As tabelas abaixo já chegam filtradas pelo RLS: cada veterinário(a)
   // só recebe do banco os registros que ela mesma criou (vet_id = auth.uid()).
-  DB.consultations = (consultations.data||[]).map(c=>({ id:c.id, petId:c.pet_id, vetId:c.vet_id, date:c.date, reason:c.reason, anamnesis:c.anamnesis, weight:Number(c.weight), temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos, diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:Number(c.valor||0) }));
-  DB.prescriptions = (prescriptions.data||[]).map(r=>({ id:r.id, petId:r.pet_id, vetId:r.vet_id, date:r.date, meds:r.meds||[], orientations:r.orientations||'' }));
+  DB.consultations = (consultations.data||[]).map(c=>({ id:c.id, petId:c.pet_id, vetId:c.vet_id, date:c.date, reason:c.reason, anamnesis:c.anamnesis, examFisico:c.exam_fisico||'', weight:Number(c.weight), temp:c.temp, hr:c.hr, rr:c.rr, tpc:c.tpc, hidratacao:c.hidratacao, mucosas:c.mucosas, linfonodos:c.linfonodos, diagnosis:c.diagnosis, conduct:c.conduct, notes:c.notes||'', valor:Number(c.valor||0) }));
+  DB.prescriptions = (prescriptions.data||[]).map(r=>({ id:r.id, petId:r.pet_id, vetId:r.vet_id, date:r.date, meds:r.meds||[], orientations:r.orientations||'', observacoes:r.observacoes||'' }));
   DB.exams = (exams.data||[]).map(e=>({ id:e.id, petId:e.pet_id, vetId:e.vet_id, date:e.date, type:e.type, valor:Number(e.valor||0), description:e.description||'', result:e.result||'', observacoes:e.observacoes||'', anexo:e.anexo||'', status:e.status }));
   DB.vaccines = (vaccines.data||[]).map(v=>({ id:v.id, petId:v.pet_id, vetId:v.vet_id, vaccine:v.vaccine, date:v.date, batch:v.batch, nextDate:v.next_date, valor:Number(v.valor||0), notes:v.notes||'' }));
   DB.payments = (payments.data||[]).map(p=>({ id:p.id, petId:p.pet_id, vetId:p.vet_id, date:p.date, service:p.service, refType:p.ref_type, refId:p.ref_id, valor:Number(p.valor), status:p.status, formaPagamento:p.forma_pagamento, parcelamentoTutor:p.parcelamento_tutor, paidDate:p.paid_date }));
