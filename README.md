@@ -8,15 +8,33 @@ build), pronto para GitHub + Vercel, com ponte opcional para Supabase.
 
 ```
 petflow/
-├── public/
-│   ├── index.html            ← o app inteiro (também funciona sozinho, com dados de demonstração)
-│   └── supabase-client.js    ← ponte opcional com o Supabase (ver Fase 2 abaixo)
-├── supabase/
-│   ├── schema.sql            ← tabelas + segurança (RLS)
-│   └── seed.sql              ← dados de demonstração para popular o banco real
+├── index.html                    ← o app inteiro (também funciona sozinho, com dados de demonstração)
+├── supabase-client.js            ← ponte opcional com o Supabase (ver Fase 2 abaixo)
+├── schema.sql                    ← tabelas + segurança (RLS) — para um banco novo
+├── migration_2026-09-11.sql      ← rode uma vez no banco que você já usa (ver abaixo)
+├── migration_2026-09-12.sql      ← rode uma vez no banco que você já usa (ver abaixo)
+├── seed.sql                      ← dados de demonstração para popular o banco real
 ├── vercel.json
 └── README.md
 ```
+
+### Atualização de 11/09/2026 — rodar a migração
+
+Se o seu Supabase **já está em produção** (você já rodou `schema.sql` antes),
+abra o **SQL Editor** do seu projeto e rode o arquivo `migration_2026-09-11.sql`
+uma única vez. Ele só acrescenta colunas/políticas novas (nada é apagado ou
+recriado) e é o que faz funcionar: o campo "Exame físico" da consulta, as
+observações da receita, e a foto de pet/tutor parar de sumir ao recarregar a
+página. Se for um banco novo, `schema.sql` já vem com tudo isso — não precisa
+rodar a migração separadamente.
+
+### Atualização de 12/09/2026 — rodar a migração
+
+Mesma coisa: se o seu Supabase já está em produção, rode
+`migration_2026-09-12.sql` uma única vez no SQL Editor. Ele só acrescenta uma
+função nova (nenhuma tabela/coluna existente é alterada) e é o que faz o(a)
+**tutor(a)** conseguir desmarcar um agendamento pela tela inicial do app. Se
+for um banco novo, `schema.sql` já vem com tudo isso.
 
 ## Fase 1 — Publicar no ar (GitHub + Vercel), sem mexer no Supabase ainda
 
@@ -36,7 +54,7 @@ demonstração locais (o mesmo protótipo que você já testou).
 2. **Vercel**
    - Entre em [vercel.com/new](https://vercel.com/new) e importe o repositório que você acabou de criar.
    - Framework preset: **Other** (é HTML puro, sem build).
-   - O `vercel.json` já aponta a pasta `public` como raiz do site — não precisa mudar nada.
+   - Como `index.html` está na raiz do repositório, não é preciso configurar nenhum diretório raiz especial no projeto da Vercel.
    - Clique em **Deploy**. Em ~30 segundos você tem uma URL pública.
 
 A partir daqui, todo `git push` na branch `main` gera um novo deploy automático.
@@ -46,14 +64,14 @@ A partir daqui, todo `git push` na branch `main` gera um novo deploy automático
 ### 2.1 Criar o projeto e as tabelas
 
 1. Crie um projeto em [supabase.com](https://supabase.com).
-2. Abra **SQL Editor** → cole e rode o conteúdo de `supabase/schema.sql` (cria as tabelas e as políticas de segurança).
+2. Abra **SQL Editor** → cole e rode o conteúdo de `schema.sql` (cria as tabelas e as políticas de segurança).
 3. Vá em **Authentication → Users → Add user** e crie o login da veterinária (e-mail/senha). Copie o **UUID** gerado.
-4. Abra `supabase/seed.sql`, troque `COLE_AQUI_O_UUID_DO_AUTH_USER` pelo UUID copiado, e rode o arquivo no SQL Editor. Isso popula o banco com o mesmo cenário de demonstração (Mel, Thor, Nina...).
+4. Abra `seed.sql`, troque `COLE_AQUI_O_UUID_DO_AUTH_USER` pelo UUID copiado, e rode o arquivo no SQL Editor. Isso popula o banco com o mesmo cenário de demonstração (Mel, Thor, Nina...).
 
 ### 2.2 Conectar o front-end
 
 1. Em **Project Settings → API**, copie a **Project URL** e a **anon public key**.
-2. Abra `public/supabase-client.js` e preencha:
+2. Abra `supabase-client.js` e preencha:
    ```js
    const SUPABASE_URL = 'https://SEU-PROJETO.supabase.co';
    const SUPABASE_ANON_KEY = 'sua-anon-key-aqui';
@@ -64,35 +82,14 @@ Com isso preenchido, o app passa a **carregar automaticamente** pets, tutores,
 consultas, exames, vacinas, agenda e financeiro direto do Supabase assim que a
 página abre — sem precisar mudar mais nada nas telas.
 
-### 2.3 O que ainda falta pra estar 100% ligado (próximo passo)
-
-O carregamento (leitura) já fica automático. O que falta é religar cada
-**ação de salvar** para também gravar no Supabase (hoje elas só atualizam a
-tela, localmente, como no protótipo). O arquivo `supabase-client.js` já traz
-um exemplo pronto (`supaInsertExam`) e a lista exata de onde mexer dentro de
-`app_part11.js` (a seção de eventos do app), uma ação de cada vez:
-
-| Ação no app | O que fazer |
-|---|---|
-| Novo atendimento | `INSERT` em `consultations` (+ `exams`/`vaccines`/`payments` se houver) |
-| Nova receita | `INSERT` em `prescriptions` |
-| Novo exame / vacina avulsos | `INSERT` em `exams` / `vaccines` |
-| Registrar pagamento | `UPDATE` em `payments` (status, forma_pagamento...) |
-| Confirmar / recusar / concluir / cancelar agendamento | `UPDATE` em `appointments` |
-| Fechar dia / bloquear horário | `INSERT`/`DELETE` em `closed_dates` / `blocked_slots` |
-
-Isso pode ser feito aos poucos — o app continua 100% funcional (com dados
-locais) entre um passo e outro. Se quiser, me chame de volta aqui e eu religo
-essas ações uma a uma com você testando cada uma no seu Supabase real.
-
-### 2.4 Login real dos tutores
+### 2.3 Login real dos tutores
 
 Hoje a tela de login tem os botões de demonstração ("Entrar como Dra. Ana" /
-"Entrar como Paola"). Depois que a Fase 2 estiver rodando, o próximo passo é
-trocar esses botões por um formulário de e-mail/senha de verdade, usando
-`supaSignInEmail` (já disponível em `supabase-client.js`). O gatilho
-`link_tutor_on_signup` no `schema.sql` já vincula automaticamente um tutor
-cadastrado pelo veterinário ao login que ele criar com o mesmo e-mail.
+"Entrar como Paola"). O próximo passo, quando fizer sentido, é trocar esses
+botões por um formulário de e-mail/senha de verdade, usando `supaSignInEmail`
+(já disponível em `supabase-client.js`). O gatilho `link_tutor_on_signup` no
+`schema.sql` já vincula automaticamente um tutor cadastrado pelo veterinário
+ao login que ele criar com o mesmo e-mail.
 
 ## Dúvidas comuns
 
