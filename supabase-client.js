@@ -143,9 +143,37 @@ async function dbInsertVaccine(v){
   const { error } = await supa.from('vaccines').insert({ id:v.id, pet_id:v.petId, vet_id: currentVetId(), vaccine:v.vaccine, date:v.date, batch:v.batch||'', next_date:v.nextDate, valor:v.valor||0, notes:v.notes||'' });
   if(error) throw error;
 }
+/* Permite à veterinária corrigir uma vacina já lançada (inclusive antigas):
+   nome, data de aplicação, lote, valor, observações e, principalmente, a
+   data da próxima dose — sem isso não era possível ajustar um reforço
+   marcado com a data errada. */
+async function dbUpdateVaccine(vaccineId, fields){
+  requireSupa();
+  const payload = {};
+  if('vaccine' in fields) payload.vaccine = fields.vaccine;
+  if('date' in fields) payload.date = fields.date;
+  if('batch' in fields) payload.batch = fields.batch;
+  if('nextDate' in fields) payload.next_date = fields.nextDate;
+  if('valor' in fields) payload.valor = fields.valor;
+  if('notes' in fields) payload.notes = fields.notes;
+  const { error } = await supa.from('vaccines').update(payload).eq('id', vaccineId);
+  if(error) throw error;
+}
 async function dbInsertPrescription(r){
   requireSupa();
   const { error } = await supa.from('prescriptions').insert({ id:r.id, pet_id:r.petId, vet_id: currentVetId(), date:r.date, meds:r.meds, orientations:r.orientations||'', observacoes:r.observacoes||'' });
+  if(error) throw error;
+}
+/* Permite à veterinária editar uma receita já emitida (inclusive antigas) —
+   medicamentos, posologia, observações e orientações gerais. */
+async function dbUpdatePrescription(prescriptionId, fields){
+  requireSupa();
+  const payload = {};
+  if('date' in fields) payload.date = fields.date;
+  if('meds' in fields) payload.meds = fields.meds;
+  if('orientations' in fields) payload.orientations = fields.orientations;
+  if('observacoes' in fields) payload.observacoes = fields.observacoes;
+  const { error } = await supa.from('prescriptions').update(payload).eq('id', prescriptionId);
   if(error) throw error;
 }
 async function dbInsertPayment(p){
@@ -171,6 +199,17 @@ async function dbUpdatePaymentsStatus(payIds, forma, parcelas, paidDate){
 async function dbInsertAppointment(a){
   requireSupa();
   const { error } = await supa.from('appointments').insert({ id:a.id, pet_id:a.petId, date:a.date, time:a.time, type:a.type, modality:a.modality, status:a.status });
+  if(error) throw error;
+}
+/* Cancelamento de agendamento pelo(a) PRÓPRIO(A) tutor(a) — usa a função
+   `cancel_own_appointment` (ver migration_2026-09-12.sql) em vez de um
+   UPDATE direto: tutores não têm (e não devem ter) uma política de UPDATE
+   geral em `appointments` — isso abriria edição de qualquer campo do
+   agendamento. A função só troca o status para 'Cancelado', só quando o
+   agendamento é de um pet do(a) próprio(a) tutor(a) e ainda está em aberto. */
+async function dbCancelOwnAppointment(apptId){
+  requireSupa();
+  const { error } = await supa.rpc('cancel_own_appointment', { p_appt_id: apptId });
   if(error) throw error;
 }
 async function dbUpdateAppointment(apptId, fields){
