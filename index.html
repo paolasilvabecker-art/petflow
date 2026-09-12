@@ -1283,6 +1283,7 @@ const STATE = {
   confirmDiscard: false,
   confirmDeletePetId: null,
   confirmDeleteConsultationId: null,
+  confirmCancelApptId: null,
   booking: { step:1, petId:null, service:null, modality:null, date:null, time:null }, // wizard tutor
   currentTutorId: 't1', // usado no modo demonstração; login real sobrescreve isso
   loginTab: 'vet',       // aba ativa na tela de login real: 'vet' | 'tutor'
@@ -1327,6 +1328,9 @@ function render(){
   }
   if(STATE.confirmDeleteConsultationId){
     app.insertAdjacentHTML('beforeend', renderConfirmDeleteConsultation());
+  }
+  if(STATE.confirmCancelApptId){
+    app.insertAdjacentHTML('beforeend', renderConfirmCancelAppt());
   }
   bindGlobalEvents();
 }
@@ -1388,6 +1392,32 @@ function renderConfirmDeleteConsultation(){
       <div class="modal-foot" style="justify-content:center;">
         <button class="btn btn-ghost" data-action="cancel-delete-consultation">Cancelar</button>
         <button class="btn btn-danger-ghost" style="background:var(--danger);color:#fff;" data-action="confirm-delete-consultation" data-consultation-id="${c.id}">${ic('trash','icon-sm')}Excluir permanentemente</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Confirmação antes de desmarcar um agendamento (tutor). O cancelamento em
+   si reaproveita o mesmo mecanismo que já existia para a veterinária
+   (status:'Cancelado' — não apaga nada, ver ação 'confirm-cancel-appt'),
+   só que agora com uma etapa de confirmação explícita no meio. */
+function renderConfirmCancelAppt(){
+  const a = DB.appointments.find(x=>x.id===STATE.confirmCancelApptId);
+  if(!a) return '';
+  const pet = getPet(a.petId);
+  return `
+  <div class="modal-overlay" style="z-index:300;">
+    <div class="modal" data-modal-inner style="max-width:440px;">
+      <div class="modal-body" style="text-align:center;padding-top:32px;">
+        <div class="empty-state" style="border:none;padding:0;">
+          <div class="eic" style="background:var(--danger-soft);color:var(--danger);">${ic('calendar','icon-lg')}</div>
+          <h3>Desmarcar este atendimento?</h3>
+          <p>Tem certeza que deseja desmarcar o atendimento de ${pet?pet.name:''} — ${a.type} — em ${fmtDateFull(a.date)} às ${a.time}?</p>
+        </div>
+      </div>
+      <div class="modal-foot" style="justify-content:center;">
+        <button class="btn btn-ghost" data-action="cancel-confirm-cancel-appt">Voltar</button>
+        <button class="btn btn-danger-ghost" style="background:var(--danger);color:#fff;" data-action="confirm-cancel-appt" data-appt-id="${a.id}">${ic('x','icon-sm')}Desmarcar atendimento</button>
       </div>
     </div>
   </div>`;
@@ -2115,7 +2145,7 @@ function renderExamsSection(petId){
   if(!exams.length) return `<div class="empty-state" style="padding:28px 16px;"><p style="margin:0;">Nenhum exame registrado.</p><button class="btn btn-soft btn-sm" style="margin-top:10px;" data-action="open-exame" data-pet-id="${petId}">${ic('plus','icon-sm')}Novo exame</button></div>`;
   return `<div class="card pad-md">
     ${exams.map(e=>`
-      <div class="reg-row">
+      <div class="reg-row" style="flex-wrap:wrap;">
         <span class="reg-ic" style="background:#EFE9FA;color:#7B61C7;">${ic('flask','icon-sm')}</span>
         <div style="flex:1;">
           <b style="font-size:13.5px;">${e.type}</b>
@@ -2125,6 +2155,7 @@ function renderExamsSection(petId){
         ${e.status==='Solicitado' ? `<button class="btn btn-soft btn-sm" data-action="iniciar-exame" data-exam-id="${e.id}">Iniciar exame</button>` : ''}
         ${e.status==='Em andamento' ? `<button class="btn btn-primary btn-sm" data-action="open-concluir-exame" data-exam-id="${e.id}">Concluir exame</button>` : ''}
         ${e.status==='Resultado disponível' ? `<button class="btn btn-ghost btn-sm" data-action="open-timeline-detail" data-type="exame" data-id="${e.id}">Ver resultado</button>` : ''}
+        <button class="btn btn-ghost btn-sm" data-action="open-editar-exame" data-exam-id="${e.id}">${ic('edit','icon-sm')}Editar</button>
       </div>`).join('')}
   </div>`;
 }
@@ -2342,7 +2373,12 @@ function draftAtFromConsultation(c){
     diagnosis:c.diagnosis||'', conduct:c.conduct||'', valor:c.valor||'', exams:[], vaccines:[] };
 }
 function freshDraftRx(petId){
-  return { petId: petId || DB.pets[0].id, date:NOW_ISO_DATE, meds:[{name:'',dosage:'',qty:'',freq:'',duration:'',route:'Oral',posologia:'',orientations:''}], observacoes:'', orientations:'' };
+  return { editId:null, petId: petId || DB.pets[0].id, date:NOW_ISO_DATE, meds:[{name:'',dosage:'',qty:'',freq:'',duration:'',route:'Oral',posologia:'',orientations:''}], observacoes:'', orientations:'' };
+}
+/* Carrega uma receita já existente no rascunho, para edição (mesmo padrão
+   de draftAtFromConsultation, usado para editar atendimentos antigos). */
+function draftRxFromPrescription(r){
+  return { editId:r.id, petId:r.petId, date:r.date, meds: r.meds.map(m=>({...m})), observacoes:r.observacoes||'', orientations:r.orientations||'' };
 }
 
 function syncAtDraftFromDOM(){
@@ -2387,6 +2423,8 @@ function renderModal(){
     case 'receita': inner = modalReceita(m.props); break;
     case 'exame': inner = modalExame(m.props); break;
     case 'vacina': inner = modalVacina(m.props); break;
+    case 'editar-exame': inner = modalEditarExame(m.props); break;
+    case 'editar-vacina': inner = modalEditarVacina(m.props); break;
     case 'concluir-exame': inner = modalConcluirExame(m.props); break;
     case 'novo-pet-wizard': inner = modalNovoPetWizard(m.props); break;
     case 'novo-pet-tutor': inner = modalNovoPetTutor(m.props); break;
@@ -2514,7 +2552,7 @@ function modalReceita(props){
   const d = DRAFT_RX;
   return `
   <div class="modal" data-modal-inner style="max-width:620px;">
-    <div class="modal-head"><h3>Nova receita</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-head"><h3>${d.editId ? 'Editar receita' : 'Nova receita'}</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
     <div class="modal-body">
       <div class="form-row">
         <div class="field"><label>Pet</label><select id="rx_pet">${petOptions(d.petId)}</select></div>
@@ -2555,7 +2593,7 @@ function modalReceita(props){
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
-      <button class="btn btn-primary" data-action="save-receita">${ic('check','icon-sm')}Gerar receita</button>
+      <button class="btn btn-primary" data-action="save-receita">${ic('check','icon-sm')}${d.editId ? 'Salvar alterações' : 'Gerar receita'}</button>
     </div>
   </div>`;
 }
@@ -2610,6 +2648,66 @@ function modalVacina(props){
     <div class="modal-foot">
       <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
       <button class="btn btn-primary" data-action="save-vacina">${ic('check','icon-sm')}Registrar vacina</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- Editar exame já lançado (inclusive antigos) ----------
+   Modal separado do "Novo exame": reúne num só lugar todos os campos do
+   exame, incluindo status/resultado/observações (que antes só podiam ser
+   preenchidos uma vez, em "Concluir exame", sem chance de correção depois).
+   Não mexe no fluxo existente Solicitado → Em andamento → Concluir. */
+function modalEditarExame(props){
+  const e = DB.exams.find(x=>x.id===props.examId);
+  if(!e) return `<div class="modal" data-modal-inner style="max-width:420px;"><div class="modal-body">Exame não encontrado.</div></div>`;
+  const pet = getPet(e.petId);
+  return `
+  <div class="modal" data-modal-inner style="max-width:560px;">
+    <div class="modal-head"><h3>Editar exame — ${pet.name}</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="field"><label>Data</label><input type="date" id="eex_date" value="${e.date}"></div>
+        <div class="field"><label>Valor (R$)</label><input id="eex_valor" type="number" value="${e.valor||''}" placeholder="Ex: 100"></div>
+      </div>
+      <div class="form-row single"><div class="field"><label>Tipo de exame</label><input id="eex_type" value="${e.type||''}" placeholder="Ex: Hemograma completo"></div></div>
+      <div class="form-row single"><div class="field"><label>Descrição</label><textarea id="eex_desc" placeholder="Motivo da solicitação...">${e.description||''}</textarea></div></div>
+      <div class="form-row single"><div class="field"><label>Status</label>
+        <select id="eex_status">${['Solicitado','Em andamento','Resultado disponível'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}</select>
+      </div></div>
+      <div class="form-row single"><div class="field"><label>Resultado</label><textarea id="eex_result" placeholder="Descreva o resultado do exame...">${e.result||''}</textarea></div></div>
+      <div class="form-row single"><div class="field"><label>Observações</label><textarea id="eex_obs" placeholder="Observações adicionais...">${e.observacoes||''}</textarea></div></div>
+      <div class="form-row single"><div class="field"><label>Laudo / anexo</label>${examAttachmentUploadHtml(e)}</div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+      <button class="btn btn-primary" data-action="save-editar-exame" data-exam-id="${e.id}">${ic('check','icon-sm')}Salvar alterações</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- Editar vacina já lançada (inclusive antigas) ----------
+   Cobre justamente o pedido de poder corrigir a data da próxima dose de
+   uma vacina cadastrada com o valor errado, além dos demais campos. */
+function modalEditarVacina(props){
+  const v = DB.vaccines.find(x=>x.id===props.vaccineId);
+  if(!v) return `<div class="modal" data-modal-inner style="max-width:420px;"><div class="modal-body">Vacina não encontrada.</div></div>`;
+  const pet = getPet(v.petId);
+  return `
+  <div class="modal" data-modal-inner style="max-width:560px;">
+    <div class="modal-head"><h3>Editar vacina — ${pet.name}</h3><button class="x-btn" data-action="close-modal">${ic('x','icon-sm')}</button></div>
+    <div class="modal-body">
+      <div class="form-row single"><div class="field"><label>Vacina</label><input id="evc_name" value="${v.vaccine||''}" placeholder="Ex: V10, Antirrábica..."></div></div>
+      <div class="form-row cols-3">
+        <div class="field"><label>Data de aplicação</label><input type="date" id="evc_date" value="${v.date}"></div>
+        <div class="field"><label>Lote</label><input id="evc_batch" value="${v.batch||''}" placeholder="Ex: LT2305"></div>
+        <div class="field"><label>Valor (R$)</label><input id="evc_valor" type="number" value="${v.valor||''}" placeholder="Ex: 100"></div>
+      </div>
+      <div class="form-row single"><div class="field"><label>Próxima dose</label><input type="date" id="evc_next" value="${v.nextDate||''}"></div></div>
+      <div class="form-row single"><div class="field"><label>Observações</label><textarea id="evc_notes" placeholder="Reações, cuidados especiais...">${v.notes||''}</textarea></div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-action="close-modal">Cancelar</button>
+      <button class="btn btn-primary" data-action="save-editar-vacina" data-vaccine-id="${v.id}">${ic('check','icon-sm')}Salvar alterações</button>
     </div>
   </div>`;
 }
@@ -2893,6 +2991,12 @@ function modalTimelineDetail(props){
         <button class="btn btn-ghost btn-sm" data-action="print-receita" data-id="${r.id}">${ic('file','icon-sm')}Imprimir</button>
       </div>
     `;
+    if(STATE.role==='vet'){
+      foot = `
+      <div class="modal-foot" style="justify-content:flex-end;">
+        <button class="btn btn-primary" data-action="open-editar-receita" data-prescription-id="${r.id}">${ic('edit','icon-sm')}Editar receita</button>
+      </div>`;
+    }
   } else if(type==='exame'){
     const e = DB.exams.find(x=>x.id===id); const pet = getPet(e.petId);
     title = `Exame — ${pet.name}`;
@@ -2908,6 +3012,12 @@ function modalTimelineDetail(props){
       </div>
       ${e.valor ? `<div class="form-section" style="margin-bottom:0;"><div class="fs-title">Pagamento</div>${moneyBadge('exame', e.id, e.valor)}</div>` : ''}
     `;
+    if(STATE.role==='vet'){
+      foot = `
+      <div class="modal-foot" style="justify-content:flex-end;">
+        <button class="btn btn-primary" data-action="open-editar-exame" data-exam-id="${e.id}">${ic('edit','icon-sm')}Editar exame</button>
+      </div>`;
+    }
   } else if(type==='vacina'){
     const v = DB.vaccines.find(x=>x.id===id); const pet = getPet(v.petId);
     title = `Vacina — ${pet.name}`;
@@ -2919,6 +3029,12 @@ function modalTimelineDetail(props){
       ${v.notes?`<div class="form-section"><div class="fs-title">Observações</div><p style="margin:0;font-size:14.5px;">${v.notes}</p></div>`:''}
       ${v.valor ? `<div class="form-section" style="margin-bottom:0;"><div class="fs-title">Pagamento</div>${moneyBadge('vacina', v.id, v.valor)}</div>` : ''}
     `;
+    if(STATE.role==='vet'){
+      foot = `
+      <div class="modal-foot" style="justify-content:flex-end;">
+        <button class="btn btn-primary" data-action="open-editar-vacina" data-vaccine-id="${v.id}">${ic('edit','icon-sm')}Editar vacina</button>
+      </div>`;
+    }
   } else if(type==='pagamento'){
     const p = DB.payments.find(x=>x.id===id); const pet = getPet(p.petId);
     title = `Pagamento — ${pet.name}`;
@@ -3197,10 +3313,77 @@ function renderTutorContent(){
 function currentTutor(){ return getTutor(STATE.currentTutorId); }
 
 /* ---------- Dashboard do Tutor ---------- */
+/* ---------- Tela inicial do tutor: status das vacinas ----------
+   Um item por pet, usando a próxima vacina já calculada em nextVaccine()
+   (mesma função usada no resumo de saúde do pet). Status calculado sempre
+   com base em NOW_ISO_DATE/daysUntil (hoje de verdade, fuso de Brasília):
+   🟢 em dia (mais de 14 dias), 🟡 próxima do vencimento (0–14 dias),
+   🔴 vencida (data já passou). Não mexe em nenhuma data já salva no banco —
+   só lê o que já existe para decidir a cor do status. */
+function tutorVaccineStatusItems(pets){
+  const out = [];
+  pets.forEach(p=>{
+    const nv = nextVaccine(p.id);
+    if(!nv || !nv.nextDate) return;
+    const d = daysUntil(nv.nextDate);
+    const status = d<0 ? 'danger' : d<=14 ? 'warn' : 'ok';
+    out.push({ pet:p, vaccine:nv.vaccine, nextDate:nv.nextDate, status });
+  });
+  const rank = { danger:0, warn:1, ok:2 };
+  out.sort((a,b)=> rank[a.status]-rank[b.status] || a.nextDate.localeCompare(b.nextDate));
+  return out;
+}
+const VACCINE_STATUS_META = {
+  danger: { emoji:'🔴', label:'Vacina vencida', badge:'badge-danger' },
+  warn:   { emoji:'🟡', label:'Vacina próxima do vencimento', badge:'badge-warn' },
+  ok:     { emoji:'🟢', label:'Vacina em dia', badge:'badge-success' },
+};
+function tutorVaccineStatusCard(item){
+  const meta = VACCINE_STATUS_META[item.status];
+  const dateLabel = item.status==='danger' ? `Venceu em ${fmtDateFull(item.nextDate)}` : `Prevista para ${fmtDateFull(item.nextDate)}`;
+  return `
+  <div class="card pad-md" style="display:flex;gap:12px;align-items:center;margin-bottom:10px;cursor:pointer;" data-action="nav" data-view="tutor-pet-detail" data-pet-id="${item.pet.id}">
+    <span style="font-size:20px;line-height:1;">${meta.emoji}</span>
+    <div style="flex:1;">
+      <span class="badge ${meta.badge}"><span class="badge-dot"></span>${meta.label}</span>
+      <div style="font-size:13.5px;font-weight:700;margin-top:6px;">${item.pet.name} · ${item.vaccine}</div>
+      <div style="font-size:12px;color:var(--ink-muted);">${dateLabel}</div>
+    </div>
+  </div>`;
+}
+
+/* ---------- Tela inicial do tutor: próximos agendamentos ----------
+   Mostra todos os atendimentos futuros (confirmados ou aguardando
+   confirmação) dos pets do tutor, cada um com opção de desmarcar (ver
+   renderConfirmCancelAppt / ação 'open-confirm-cancel-appt' — sempre com
+   confirmação antes de cancelar de fato). */
+function tutorUpcomingAppts(pets){
+  return DB.appointments
+    .filter(a=>pets.some(p=>p.id===a.petId) && a.date>=NOW_ISO_DATE && (a.status==='Confirmado' || a.status==='Aguardando confirmação'))
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+}
+function tutorUpcomingApptCard(a){
+  const pet = getPet(a.petId);
+  return `
+  <div class="card pad-md" style="display:flex;gap:14px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+    <div style="text-align:center;background:var(--primary-soft);border-radius:12px;padding:8px 12px;">
+      <div style="font-family:'Fraunces',serif;font-weight:700;font-size:16px;color:var(--primary-dark);">${fmtDateShort(a.date)}</div>
+      <div style="font-size:11px;color:var(--primary-dark);">${a.time}</div>
+    </div>
+    <div style="flex:1;min-width:140px;">
+      <b style="font-size:14.5px;">${pet.name} — ${a.type}</b>
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-top:2px;">Com ${DB.vet.name} · ${a.modality}</div>
+      <div style="margin-top:6px;">${apptStatusBadge(a.status)}</div>
+    </div>
+    <button class="btn btn-danger-ghost btn-sm" data-action="open-confirm-cancel-appt" data-appt-id="${a.id}">${ic('x','icon-sm')}Desmarcar</button>
+  </div>`;
+}
+
 function renderTutorDashboard(){
   const t = currentTutor();
   const pets = petsOfTutor(t.id);
-  const nextAppt = DB.appointments.filter(a=>pets.some(p=>p.id===a.petId) && a.date>=NOW_ISO_DATE).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time))[0];
+  const vaccineItems = tutorVaccineStatusItems(pets);
+  const upcomingAppts = tutorUpcomingAppts(pets);
   const registros = pets.flatMap(p=>petTimeline(p.id).map(x=>({...x, pet:p}))).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,4);
   const typeCfg = { consulta:{icon:'stethoscope', label:'Consulta', bg:'var(--primary-soft)', fg:'var(--primary)'}, receita:{icon:'pill', label:'Receita', bg:'var(--accent-soft)', fg:'var(--accent)'}, exame:{icon:'flask', label:'Exame', bg:'#EFE9FA', fg:'#7B61C7'}, vacina:{icon:'syringe', label:'Vacina', bg:'var(--success-soft)', fg:'var(--success)'}, pagamento:{icon:'wallet', label:'Pagamento', bg:'var(--success-soft)', fg:'var(--success)'} };
   const novosResultados = DB.exams.filter(e=>pets.some(p=>p.id===e.petId) && e.status==='Resultado disponível').sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,2);
@@ -3223,20 +3406,12 @@ function renderTutorDashboard(){
           </div>`).join('')}
       </div>
 
-      ${nextAppt ? `
-      <div class="section-title" style="margin-top:22px;"><h2>Próximo atendimento</h2></div>
-      <div class="card pad-md" style="display:flex;gap:14px;align-items:center;">
-        <div style="text-align:center;background:var(--primary-soft);border-radius:12px;padding:8px 12px;">
-          <div style="font-family:'Fraunces',serif;font-weight:700;font-size:16px;color:var(--primary-dark);">${fmtDateShort(nextAppt.date)}</div>
-          <div style="font-size:11px;color:var(--primary-dark);">${nextAppt.time}</div>
-        </div>
-        <div style="flex:1;">
-          <b style="font-size:14.5px;">${getPet(nextAppt.petId).name} — ${nextAppt.type}</b>
-          <div style="font-size:12.5px;color:var(--ink-muted);margin-top:2px;">Com ${DB.vet.name} · ${nextAppt.modality}</div>
-        </div>
-        <span class="badge badge-success"><span class="badge-dot"></span>${nextAppt.status}</span>
-      </div>` : `
-      <div class="section-title" style="margin-top:22px;"><h2>Próximo atendimento</h2></div>
+      ${vaccineItems.length ? `
+      <div class="section-title" style="margin-top:22px;"><h2>Vacinas</h2></div>
+      ${vaccineItems.map(tutorVaccineStatusCard).join('')}` : ''}
+
+      <div class="section-title" style="margin-top:22px;"><h2>Próximos agendamentos</h2></div>
+      ${upcomingAppts.length ? upcomingAppts.slice(0,4).map(tutorUpcomingApptCard).join('') : `
       <div class="empty-state" style="padding:28px 16px;">
         <p style="margin:0 0 14px;">Nenhum atendimento agendado.</p>
         <button class="btn btn-primary btn-sm" data-action="nav" data-view="tutor-agendamento">${ic('plus','icon-sm')}Agendar atendimento</button>
@@ -3674,6 +3849,7 @@ document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){
     if(STATE.confirmDeletePetId){ e.preventDefault(); STATE.confirmDeletePetId = null; render(); return; }
     if(STATE.confirmDeleteConsultationId){ e.preventDefault(); STATE.confirmDeleteConsultationId = null; render(); return; }
+    if(STATE.confirmCancelApptId){ e.preventDefault(); STATE.confirmCancelApptId = null; render(); return; }
     if(STATE.modal){
       e.preventDefault();
       if(STATE.confirmDiscard){ STATE.confirmDiscard = false; render(); }
@@ -3814,6 +3990,17 @@ document.addEventListener('click', async function(e){
     case 'open-receita': DRAFT_RX = freshDraftRx(d.petId); MODAL_DIRTY=false; openModal('receita', {petId: d.petId}); break;
     case 'open-exame': MODAL_DIRTY=false; openModal('exame', {petId: d.petId}); break;
     case 'open-vacina': MODAL_DIRTY=false; openModal('vacina', {petId: d.petId}); break;
+    /* Autonomia da veterinária para corrigir registros já salvos (inclusive
+       antigos): receita, exame e vacina passam a ter edição completa, no
+       mesmo padrão que já existia para "Editar atendimento" (consulta). */
+    case 'open-editar-receita': {
+      const r = DB.prescriptions.find(x=>x.id===d.prescriptionId);
+      if(!r){ showToast('Receita não encontrada.', 'warn'); break; }
+      DRAFT_RX = draftRxFromPrescription(r); MODAL_DIRTY=false; openModal('receita', {petId: r.petId});
+      break;
+    }
+    case 'open-editar-exame': MODAL_DIRTY=false; openModal('editar-exame', {examId: d.examId}); break;
+    case 'open-editar-vacina': MODAL_DIRTY=false; openModal('editar-vacina', {vaccineId: d.vaccineId}); break;
     case 'open-concluir-exame': MODAL_DIRTY=false; openModal('concluir-exame', {examId: d.examId}); break;
     case 'open-novo-pet': MODAL_DIRTY=false; PET_WIZARD = freshPetWizard(d.tutorId); openModal('novo-pet-wizard', {}); break;
     case 'open-novo-pet-tutor': MODAL_DIRTY=false; openModal('novo-pet-tutor', {}); break;
@@ -3948,6 +4135,34 @@ document.addEventListener('click', async function(e){
       break;
     }
 
+    /* Desmarcar agendamento pelo(a) tutor(a) — sempre com confirmação antes
+       (ver renderConfirmCancelAppt). O cancelamento em si usa o mesmo status
+       'Cancelado' já usado pela veterinária: não apaga o agendamento nem
+       nada relacionado a ele (pet, tutor, consultas, exames, vacinas),
+       apenas tira o atendimento da lista de "próximos". */
+    case 'open-confirm-cancel-appt': STATE.confirmCancelApptId = d.apptId; render(); break;
+    case 'cancel-confirm-cancel-appt': STATE.confirmCancelApptId = null; render(); break;
+    case 'confirm-cancel-appt': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const a = DB.appointments.find(x=>x.id===d.apptId);
+      if(!a){ STATE.confirmCancelApptId = null; SAVE_LOCK=false; render(); break; }
+      const prev = a.status; a.status='Cancelado';
+      try{
+        if(remoteReady()){
+          // Tutor(a) usa a função restrita cancel_own_appointment (ver
+          // migration_2026-09-12.sql) — não tem permissão de UPDATE geral
+          // em appointments. A veterinária mantém o caminho já existente.
+          if(STATE.role==='tutor' && typeof dbCancelOwnAppointment==='function') await dbCancelOwnAppointment(a.id);
+          else await dbUpdateAppointment(a.id, {status:'Cancelado'});
+        }
+        STATE.confirmCancelApptId = null;
+        showToast('Atendimento desmarcado.');
+      } catch(err){ a.status=prev; STATE.confirmCancelApptId = null; reportSaveError(err); break; }
+      render();
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+
     case 'close-modal': attemptCloseModal(); break;
     case 'print-receita': printReceita(d.id); break;
 
@@ -4049,15 +4264,23 @@ document.addEventListener('click', async function(e){
     case 'save-receita': {
       if(SAVE_LOCK) break; SAVE_LOCK = true;
       syncRxDraftFromDOM();
+      const isEdit = !!DRAFT_RX.editId;
       const petId = DRAFT_RX.petId;
       const meds = DRAFT_RX.meds.filter(m=>m.name).map(m=>({ name:m.name, dosage:m.dosage||'—', qty:m.qty||'', freq:m.freq||'—', duration:m.duration||'—', route:m.route||'Oral', posologia:m.posologia||'', orientations:m.orientations||'' }));
-      const r = { id: uid('r'), petId, date: DRAFT_RX.date || NOW_ISO_DATE, meds: meds.length?meds:[{name:'Medicamento',dosage:'—',qty:'',freq:'—',duration:'—',route:'Oral',posologia:'',orientations:''}], orientations: DRAFT_RX.orientations||'', observacoes: DRAFT_RX.observacoes||'' };
+      const r = { id: DRAFT_RX.editId || uid('r'), petId, date: DRAFT_RX.date || NOW_ISO_DATE, meds: meds.length?meds:[{name:'Medicamento',dosage:'—',qty:'',freq:'—',duration:'—',route:'Oral',posologia:'',orientations:''}], orientations: DRAFT_RX.orientations||'', observacoes: DRAFT_RX.observacoes||'' };
       try{
-        if(remoteReady()) await dbInsertPrescription(r);
-        DB.prescriptions.push(r);
+        if(isEdit){
+          const existing = DB.prescriptions.find(x=>x.id===r.id);
+          if(!existing){ throw new Error('Receita não encontrada — pode já ter sido excluída.'); }
+          if(remoteReady()) await dbUpdatePrescription(r.id, { date:r.date, meds:r.meds, orientations:r.orientations, observacoes:r.observacoes });
+          Object.assign(existing, r);
+        } else {
+          if(remoteReady()) await dbInsertPrescription(r);
+          DB.prescriptions.push(r);
+        }
         DRAFT_RX = null;
         doCloseModal();
-        showToast(`Receita gerada com ${r.meds.length} medicamento${r.meds.length>1?'s':''}.`);
+        showToast(isEdit ? 'Receita atualizada.' : `Receita gerada com ${r.meds.length} medicamento${r.meds.length>1?'s':''}.`);
         navigate('vet-pet-detail', {petId});
       } catch(err){ reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
@@ -4098,6 +4321,63 @@ document.addEventListener('click', async function(e){
         showToast('Vacinação registrada.');
         navigate('vet-pet-detail', {petId});
       } catch(err){ reportSaveError(err); break; }
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+    case 'save-editar-exame': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const ex = DB.exams.find(x=>x.id===d.examId);
+      if(!ex){ SAVE_LOCK=false; break; }
+      const prev = {...ex};
+      const fields = {
+        date: val('eex_date') || ex.date,
+        type: val('eex_type') || ex.type,
+        valor: num('eex_valor'),
+        description: val('eex_desc'),
+        status: val('eex_status') || ex.status,
+        result: val('eex_result'),
+        observacoes: val('eex_obs'),
+      };
+      try{
+        if(remoteReady()) await dbUpdateExam(ex.id, fields);
+        Object.assign(ex, fields);
+        const existingPay = paymentForRef('exame', ex.id);
+        if(existingPay && existingPay.valor !== fields.valor){
+          existingPay.valor = fields.valor;
+          if(remoteReady()) await dbUpdatePaymentValor(existingPay.id, fields.valor);
+        }
+        doCloseModal();
+        showToast('Exame atualizado.');
+        navigate('vet-pet-detail', {petId: ex.petId});
+      } catch(err){ Object.assign(ex, prev); reportSaveError(err); break; }
+      setTimeout(()=>{ SAVE_LOCK=false; },0);
+      break;
+    }
+    case 'save-editar-vacina': {
+      if(SAVE_LOCK) break; SAVE_LOCK = true;
+      const v = DB.vaccines.find(x=>x.id===d.vaccineId);
+      if(!v){ SAVE_LOCK=false; break; }
+      const prev = {...v};
+      const fields = {
+        vaccine: val('evc_name') || v.vaccine,
+        date: val('evc_date') || v.date,
+        batch: val('evc_batch'),
+        nextDate: val('evc_next') || v.nextDate,
+        valor: num('evc_valor'),
+        notes: val('evc_notes'),
+      };
+      try{
+        if(remoteReady()) await dbUpdateVaccine(v.id, fields);
+        Object.assign(v, fields);
+        const existingPay = paymentForRef('vacina', v.id);
+        if(existingPay && existingPay.valor !== fields.valor){
+          existingPay.valor = fields.valor;
+          if(remoteReady()) await dbUpdatePaymentValor(existingPay.id, fields.valor);
+        }
+        doCloseModal();
+        showToast('Vacina atualizada.');
+        navigate('vet-pet-detail', {petId: v.petId});
+      } catch(err){ Object.assign(v, prev); reportSaveError(err); break; }
       setTimeout(()=>{ SAVE_LOCK=false; },0);
       break;
     }
