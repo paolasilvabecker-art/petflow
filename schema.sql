@@ -34,6 +34,7 @@ create table if not exists tutors (
   phone text,
   email text unique,
   cpf text unique,
+  photo_url text,
   created_at timestamptz default now()
 );
 
@@ -49,6 +50,7 @@ create table if not exists pets (
   weight numeric(6,2),
   microchip text,
   notes text,
+  photo_url text,
   created_at timestamptz default now()
 );
 
@@ -76,6 +78,7 @@ create table if not exists consultations (
   date date not null,
   reason text,
   anamnesis text,
+  exam_fisico text,      -- observações/comentários do exame físico (separado da anamnese)
   weight numeric(6,2),
   temp text,
   hr text,
@@ -97,8 +100,9 @@ create table if not exists prescriptions (
   pet_id uuid not null references pets(id) on delete cascade,
   vet_id uuid not null references vets(id) on delete cascade,
   date date not null,
-  meds jsonb not null default '[]',  -- [{name,dosage,freq,duration,route,orientations}, ...]
-  orientations text,
+  meds jsonb not null default '[]',  -- [{name,dosage,qty,freq,duration,route,posologia,orientations}, ...]
+  orientations text,      -- orientações gerais / texto livre da receita
+  observacoes text,       -- observações gerais da receita
   created_at timestamptz default now()
 );
 
@@ -258,3 +262,83 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function link_tutor_on_signup();
+
+-- ============================================================
+-- Storage: bucket "photos" (fotos de pet/tutor e laudos de exame)
+-- Precisa existir e ser público para as URLs geradas no app funcionarem.
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values ('photos', 'photos', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Public read access to photos" on storage.objects;
+create policy "Public read access to photos"
+  on storage.objects for select
+  using (bucket_id = 'photos');
+
+drop policy if exists "Authenticated users can upload photos" on storage.objects;
+create policy "Authenticated users can upload photos"
+  on storage.objects for insert
+  with check (bucket_id = 'photos' and auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated users can update photos" on storage.objects;
+create policy "Authenticated users can update photos"
+  on storage.objects for update
+  using (bucket_id = 'photos' and auth.role() = 'authenticated');
+
+-- ============================================================
+-- Foto do próprio pet/tutor, gravada pelo(a) TUTOR(A)
+-- Tutores só têm política de SELECT em `pets`/`tutors` (ver acima) — sem
+-- uma política de UPDATE, um UPDATE feito pela tela do tutor não dá erro,
+-- mas também não grava nada (a linha fica invisível para a RLS), e a foto
+-- "some" ao recarregar a página. Estas duas funções (security definer)
+-- liberam SOMENTE a gravação da própria coluna de foto, sem abrir edição
+-- geral das tabelas para tutores.
+-- ============================================================
+create or replace function update_own_pet_photo(p_pet_id uuid, p_photo_url text)
+returns void language plpgsql security definer as $$
+begin
+  if not owns_pet(p_pet_id) then
+    raise exception 'Você não tem permissão para alterar a foto deste pet.';
+  end if;
+  update pets set photo_url = p_photo_url where id = p_pet_id;
+end;
+$$;
+grant execute on function update_own_pet_photo(uuid, text) to authenticated;
+
+create or replace function update_own_tutor_photo(p_photo_url text)
+returns void language plpgsql security definer as $$
+begin
+  update tutors set photo_url = p_photo_url where user_id = auth.uid();
+end;
+$$;
+grant execute on function update_own_tutor_photo(text) to authenticated;
+
+-- ============================================================
+-- Desmarcar agendamento, feito pelo(a) próprio(a) TUTOR(A)
+-- Tutores só têm política de SELECT/INSERT em `appointments` (ver acima) —
+-- de propósito, para não abrir edição geral do agendamento (data, horário,
+-- tipo...) para eles. Esta função (security definer) libera SOMENTE a
+-- troca de status para 'Cancelado', e só quando o agendamento é de um pet
+-- do(a) próprio(a) tutor(a) e ainda está em aberto.
+-- ============================================================
+create or replace function cancel_own_appointment(p_appt_id uuid)
+returns void language plpgsql security definer as $$
+declare
+  v_pet_id uuid;
+  v_status text;
+begin
+  select pet_id, status into v_pet_id, v_status from appointments where id = p_appt_id;
+  if v_pet_id is null then
+    raise exception 'Agendamento não encontrado.';
+  end if;
+  if not owns_pet(v_pet_id) then
+    raise exception 'Você não tem permissão para desmarcar este agendamento.';
+  end if;
+  if v_status not in ('Confirmado','Aguardando confirmação') then
+    raise exception 'Este agendamento não pode mais ser desmarcado.';
+  end if;
+  update appointments set status = 'Cancelado' where id = p_appt_id;
+end;
+$$;
+grant execute on function cancel_own_appointment(uuid) to authenticated;
